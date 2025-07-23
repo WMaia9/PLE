@@ -1,0 +1,23 @@
+# Processing parameters
+processing_parameters:
+  background_level: 990.0
+  peak_emission_wavelength: 583.0
+  integration_window_size: 15
+
+# Files for G-factor calculation (using a reference dye)
+g_factor_files:
+  parallel: "data/par_dye.csv"
+  perpendicular: "data/perp_dye.csv"
+
+# Sample files to be analyzed
+sample_files:
+  name: "CHCl3"
+  parallel: "data/Zb571_CHCl3_par.csv"
+  perpendicular: "data/Zb571_CHCl3_perp.csv"
+
+# Output paths for results
+output_paths:
+  processed_data: "results/processed_data/"
+  plots: "results/plots/"
+  g_factor_filename: "g_factor_correction.csv"
+  anisotropy_filename: "anisotropy_results_CHCl3.csv"
