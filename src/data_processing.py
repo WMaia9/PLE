@@ -1,3 +1,5 @@
+# src/data_processing.py
+
 import numpy as np
 import pandas as pd
 import os
@@ -5,9 +7,11 @@ from typing import Dict, Any, List, Tuple
 from .file_handler import load_and_clean_eem_csv
 
 def _clean_label(p: str) -> str:
-    return os.path.basename(p).lower().replace("perp", "").replace("par", "").replace("_", "").strip()
+    """Helper function to group par/perp files."""
+    return os.path.basename(p).lower().replace("perp", "").replace("par", "").replace(".csv", "").replace("_", "").strip()
 
-def _pair_files(file_paths: List[str]) -> Dict[str, Dict[str, str]]:
+def get_file_pairs(file_paths: List[str]) -> Tuple[Dict, Dict]:
+    """Separates the dye pair from the sample pairs."""
     paired = {}
     for path in file_paths:
         label = _clean_label(path)
@@ -17,80 +21,107 @@ def _pair_files(file_paths: List[str]) -> Dict[str, Dict[str, str]]:
             paired[label]['parallel'] = path
         elif "perp" in path.lower():
             paired[label]['perpendicular'] = path
-    return paired
 
-def _get_avg_intensities(par_path: str, perp_path: str, params: Dict[str, Any]) -> Tuple:
-    df_par = load_and_clean_eem_csv(par_path)
-    lambda_em, par_signal, lamp = df_par.iloc[:-1, 0].values, df_par.iloc[:-1, 1:].values, df_par.iloc[-1, 1:].values
-    lambda_ex = np.array(df_par.columns[1:], dtype=float)
+    dye_label = next((label for label in paired if "dye" in label), None)
+    if not dye_label:
+        raise ValueError("No reference 'dye' files found.")
+    
+    dye_pair = {dye_label: paired.pop(dye_label)}
+    sample_pairs = paired
+    return dye_pair, sample_pairs
 
-    df_perp = load_and_clean_eem_csv(perp_path)
-    perp_signal = df_perp.iloc[:-1, 1:].values
+def _calculate_average_intensities(par_path: str, perp_path: str, params: Dict[str, Any]) -> Dict:
+    """Processes a single par/perp file pair and returns a dictionary of results."""
+    par_df = load_and_clean_eem_csv(par_path)
+    perp_df = load_and_clean_eem_csv(perp_path)
     
-    par_corr = (par_signal - params['background']) / lamp
-    perp_corr = (perp_signal - params['background']) / lamp
+    lambda_em, par_signal, lamp = par_df.iloc[:-1, 0].values, par_df.iloc[:-1, 1:].values, par_df.iloc[-1, 1:].values
+    _, perp_signal, _ = perp_df.iloc[:-1, 0].values, perp_df.iloc[:-1, 1:].values, perp_df.iloc[-1, 1:].values
     
+    num_excitation_points = par_signal.shape[1]
+    lambda_ex = np.arange(450, 450 + num_excitation_points)
+
+    background = params['background']
+    par_bg = par_signal - background
+    perp_bg = perp_signal - background
+
+    par_lamp_corr = par_bg / lamp
+    perp_lamp_corr = perp_bg / lamp
+
     lambda_0_key = next((p for p in params['lambda_0_dict'] if os.path.basename(p) == os.path.basename(par_path)), par_path)
     lambda_0 = params['lambda_0_dict'][lambda_0_key]
+    
+    window_size = params['window_size']
+    half_window = window_size // 2
+    
     i_star = np.argmin(np.abs(lambda_em - lambda_0))
-    start_idx = max(i_star - params['half_window_pts'], 0)
-    end_idx = min(i_star + params['half_window_pts'] + 1, len(lambda_em))
+    start_idx = max(i_star - half_window, 0)
+    end_idx = min(i_star + half_window + 1, len(lambda_em))
 
-    par_avg = par_corr[start_idx:end_idx, :].mean(axis=0)
-    perp_avg = perp_corr[start_idx:end_idx, :].mean(axis=0)
+    if end_idx - start_idx < window_size:
+        if start_idx == 0:
+            end_idx = start_idx + window_size
+        elif end_idx == len(lambda_em):
+            start_idx = end_idx - window_size
+
+    par_avg_lamp_corr = par_lamp_corr[start_idx:end_idx, :].mean(axis=0)
+    perp_avg_lamp_corr = perp_lamp_corr[start_idx:end_idx, :].mean(axis=0)
+    par_avg_raw = par_bg[start_idx:end_idx, :].mean(axis=0)
     
-    return par_avg, perp_avg, lambda_ex, lambda_0
+    return {
+        "lambda_ex": lambda_ex, "lambda_0": lambda_0, "raw_lamp_vector": lamp,
+        "par_avg_raw": par_avg_raw, "par_avg_lamp_corr": par_avg_lamp_corr,
+        "perp_avg_lamp_corr": perp_avg_lamp_corr,
+    }
 
-def calculate_anisotropy(par_avg: np.ndarray, perp_avg: np.ndarray, g_factor: np.ndarray) -> np.ndarray:
-    perp_corrected = perp_avg * g_factor
-    numerator = par_avg - perp_corrected
-    denominator = par_avg + 2 * perp_corrected
-    return np.divide(numerator, denominator, out=np.zeros(numerator.shape, dtype=float), where=denominator!=0)
-
-def process_anisotropy_run(file_paths: List[str], params: Dict[str, Any]) -> Tuple[Dict[str, pd.DataFrame], pd.DataFrame]:
-    paired_files = _pair_files(file_paths)
-    results = {}
+def calculate_g_factor_from_dye(dye_pair: Dict, params: Dict[str, Any]) -> pd.DataFrame:
+    """Calculates the G-Factor from the dye files and returns a DataFrame."""
+    label, pair_paths = list(dye_pair.items())[0]
+    print(f"\n-> Calculating G-Factor (Cj) using '{label}'...")
     
-    dye_label = next((label for label in paired_files if "dye" in label), None)
-    if not dye_label:
-        raise ValueError("No reference 'dye' files found to calculate G-factor.")
-
-    print(f"\n[1/3] Calculating G-Factor using '{dye_label}'...")
-    dye_pair = paired_files.pop(dye_label)
-    dye_par_avg, dye_perp_avg, lambda_ex, _ = _get_avg_intensities(dye_pair['parallel'], dye_pair['perpendicular'], params)
+    dye_results = _calculate_average_intensities(pair_paths['parallel'], pair_paths['perpendicular'], params)
     
     with np.errstate(divide='ignore', invalid='ignore'):
-        c_vector = dye_par_avg / dye_perp_avg
-    
-    if params['correction_mode'] == 'scalar':
-        c_scalar = np.nanmean(c_vector)
-        g_factor_to_apply = np.full_like(c_vector, c_scalar)
-        print(f"  - Using SCALAR G-Factor: {c_scalar:.4f}")
-    else:
-        g_factor_to_apply = np.nan_to_num(c_vector, nan=1.0)
-        print("  - Using VECTOR G-Factor.")
-        
-    g_factor_df = pd.DataFrame({'Excitation Wavelength (nm)': lambda_ex, 'G_Factor': g_factor_to_apply})
+        Cj = dye_results["par_avg_lamp_corr"] / dye_results["perp_avg_lamp_corr"]
+    Cj = np.nan_to_num(Cj, nan=1.0)
 
-    print("\n[2/3] Calculating Anisotropy for samples...")
-    for label, pair in paired_files.items():
-        if 'parallel' not in pair or 'perpendicular' not in pair:
-            print(f"  - Skipping '{label}': missing a par/perp file.")
-            continue
+    g_factor_df = pd.DataFrame({
+        "Excitation Wavelength (nm)": dye_results["lambda_ex"],
+        "Par Avg": dye_results["par_avg_lamp_corr"],
+        "Perp Avg": dye_results["perp_avg_lamp_corr"],
+        "Cj (Par / Perp)": Cj,
+    })
+    print("\n--- G-Factor Data Table (Dye) ---")
+    print(g_factor_df.head(20))
+
+    g_factor_df["perp_avg_g_corr"] = dye_results["perp_avg_lamp_corr"] * Cj
+    g_factor_df["raw_lamp_vector"] = dye_results["raw_lamp_vector"]
+    g_factor_df["par_avg_raw"] = dye_results["par_avg_raw"]
+    return g_factor_df
+
+def process_single_sample(sample_label: str, sample_pair: Dict, g_factor_df: pd.DataFrame, params: Dict[str, Any]) -> pd.DataFrame:
+    """Processes a single sample using the calculated G-Factor and returns a DataFrame."""
+    print(f"-> Processing sample: '{sample_label}'")
+    sample_results = _calculate_average_intensities(sample_pair['parallel'], sample_pair['perpendicular'], params)
+    
+    Cj = g_factor_df["Cj (Par / Perp)"].values
+    perp_corrected = sample_results["perp_avg_lamp_corr"] * Cj
+    par_avg = sample_results["par_avg_lamp_corr"]
+    anisotropy = (par_avg - perp_corrected) / (par_avg + 2 * perp_corrected)
+    
+    final_df = pd.DataFrame({
+        "Excitation Wavelength (nm)": sample_results["lambda_ex"],
+        "Par Avg": par_avg,
+        "Perp Avg": sample_results["perp_avg_lamp_corr"],
+        "Correction Factor (Cj)": Cj,
+        "Perp Corrected": perp_corrected,
+        "Anisotropy": anisotropy,
+        "Energy Relative to Lambda_0 (eV)": (1240 / sample_results["lambda_ex"]) - (1240 / sample_results["lambda_0"]),
         
-        print(f"  - Processing sample: '{label}'")
-        par_avg, perp_avg, lambda_ex, lambda_0 = _get_avg_intensities(pair['parallel'], pair['perpendicular'], params)
-        anisotropy = calculate_anisotropy(par_avg, perp_avg, g_factor_to_apply)
-        
-        df = pd.DataFrame({
-            "Excitation Wavelength (nm)": lambda_ex,
-            "Relative Energy (eV)": (1240 / lambda_ex) - (1240 / lambda_0),
-            "Anisotropy": anisotropy,
-            "I_parallel_avg": par_avg,
-            "I_perpendicular_avg": perp_avg,
-            "I_perp_corrected": perp_avg * g_factor_to_apply,
-        })
-        results[label] = df
-        
-    print("\n[3/3] Analysis complete.")
-    return results, g_factor_df
+        "lambda_0": sample_results["lambda_0"],
+        "raw_lamp_vector": sample_results["raw_lamp_vector"],
+        "par_avg_raw": sample_results["par_avg_raw"],
+    })
+    print(f"\n--- Results Table for '{sample_label}' ---")
+    print(final_df.head(10))
+    return final_df
