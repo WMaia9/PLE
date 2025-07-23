@@ -4,23 +4,30 @@ import numpy as np
 import pandas as pd
 import os
 from typing import Dict, Any, List, Tuple
-from .file_handler import load_and_clean_eem_csv
 
-def _clean_label(p: str) -> str:
-    """Helper function to group par/perp files."""
-    return os.path.basename(p).lower().replace("perp", "").replace("par", "").replace(".csv", "").replace("_", "").strip()
+def _clean_label(file_object_or_path) -> str:
+    """
+    Helper function to create a consistent label from either a file path (str)
+    or a Streamlit UploadedFile object.
+    """
+    # Get the filename string, whether it's a path or an object
+    filename = os.path.basename(file_object_or_path.name if hasattr(file_object_or_path, 'name') else file_object_or_path)
+    return filename.lower().replace("perp", "").replace("par", "").replace(".csv", "").replace("_", "").strip()
 
-def get_file_pairs(file_paths: List[str]) -> Tuple[Dict, Dict]:
+def get_file_pairs(file_list: List) -> Tuple[Dict, Dict]:
     """Separates the dye pair from the sample pairs."""
     paired = {}
-    for path in file_paths:
-        label = _clean_label(path)
+    for file_obj in file_list:
+        label = _clean_label(file_obj)
         if label not in paired:
             paired[label] = {}
-        if "par" in path.lower():
-            paired[label]['parallel'] = path
-        elif "perp" in path.lower():
-            paired[label]['perpendicular'] = path
+        
+        # Get the filename to check for 'par' or 'perp'
+        filename = file_obj.name if hasattr(file_obj, 'name') else os.path.basename(file_obj)
+        if "par" in filename.lower():
+            paired[label]['parallel'] = file_obj
+        elif "perp" in filename.lower():
+            paired[label]['perpendicular'] = file_obj
 
     dye_label = next((label for label in paired if "dye" in label), None)
     if not dye_label:
@@ -30,10 +37,11 @@ def get_file_pairs(file_paths: List[str]) -> Tuple[Dict, Dict]:
     sample_pairs = paired
     return dye_pair, sample_pairs
 
-def _calculate_average_intensities(par_path: str, perp_path: str, params: Dict[str, Any]) -> Dict:
+def _calculate_average_intensities(par_file, perp_file, params: Dict[str, Any]) -> Dict:
     """Processes a single par/perp file pair and returns a dictionary of results."""
-    par_df = load_and_clean_eem_csv(par_path)
-    perp_df = load_and_clean_eem_csv(perp_path)
+    # pandas.read_csv can handle both file paths and UploadedFile objects directly
+    par_df = pd.read_csv(par_file, header=None).drop(index=[0, 1]).reset_index(drop=True).astype(float)
+    perp_df = pd.read_csv(perp_file, header=None).drop(index=[0, 1]).reset_index(drop=True).astype(float)
     
     lambda_em, par_signal, lamp = par_df.iloc[:-1, 0].values, par_df.iloc[:-1, 1:].values, par_df.iloc[-1, 1:].values
     _, perp_signal, _ = perp_df.iloc[:-1, 0].values, perp_df.iloc[:-1, 1:].values, perp_df.iloc[-1, 1:].values
@@ -47,8 +55,9 @@ def _calculate_average_intensities(par_path: str, perp_path: str, params: Dict[s
 
     par_lamp_corr = par_bg / lamp
     perp_lamp_corr = perp_bg / lamp
-
-    lambda_0_key = next((p for p in params['lambda_0_dict'] if os.path.basename(p) == os.path.basename(par_path)), par_path)
+    
+    par_filename = par_file.name if hasattr(par_file, 'name') else os.path.basename(par_file)
+    lambda_0_key = next((p for p in params['lambda_0_dict'] if os.path.basename(p) == par_filename), par_filename)
     lambda_0 = params['lambda_0_dict'][lambda_0_key]
     
     window_size = params['window_size']
@@ -76,10 +85,10 @@ def _calculate_average_intensities(par_path: str, perp_path: str, params: Dict[s
 
 def calculate_g_factor_from_dye(dye_pair: Dict, params: Dict[str, Any]) -> pd.DataFrame:
     """Calculates the G-Factor from the dye files and returns a DataFrame."""
-    label, pair_paths = list(dye_pair.items())[0]
+    label, file_objects = list(dye_pair.items())[0]
     print(f"\n-> Calculating G-Factor (Cj) using '{label}'...")
     
-    dye_results = _calculate_average_intensities(pair_paths['parallel'], pair_paths['perpendicular'], params)
+    dye_results = _calculate_average_intensities(file_objects['parallel'], file_objects['perpendicular'], params)
     
     with np.errstate(divide='ignore', invalid='ignore'):
         Cj = dye_results["par_avg_lamp_corr"] / dye_results["perp_avg_lamp_corr"]
