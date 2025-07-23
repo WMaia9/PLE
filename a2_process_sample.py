@@ -8,7 +8,7 @@ from src.data_processing import (
 )
 from src.plotting import plot_and_save, plot_corrected_intensities
 
-def main():
+def run_sample_analysis():
     """
     Executes the pipeline to calculate the anisotropy of a sample,
     using the pre-calculated G-Factor.
@@ -76,4 +76,4 @@ def main():
     print(f"Sample plots saved to: {plots_dir}")
 
 if __name__ == "__main__":
-    main()
+    run_sample_analysis()

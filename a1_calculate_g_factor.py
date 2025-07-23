@@ -4,7 +4,7 @@ from src.file_handler import load_config, load_and_clean_eem_csv
 from src.data_processing import process_raw_to_avg_intensity, calculate_g_factor
 from src.plotting import plot_and_save
 
-def main():
+def run_g_factor_calculation():
     """
     Executes the pipeline to calculate the instrumental G-factor
     from the reference dye measurements.
@@ -53,5 +53,6 @@ def main():
     )
     print(f"G-factor plot saved to: {plot_path}")
 
+# This part allows the script to be run by itself OR imported by another script.
 if __name__ == "__main__":
-    main()
+    run_g_factor_calculation()
