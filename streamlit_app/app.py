@@ -143,6 +143,21 @@ if uploaded_files:
                 st.exception(e)
                 st.session_state.results_generated = False
 
+# --- "About" Section added to the sidebar ---
+st.sidebar.markdown("---")
+st.sidebar.header("About")
+st.sidebar.markdown(
+    """
+    This application was developed as a project by students from the 
+    **University of California, Merced**.
+
+    - **Intellectual Property:** Fernanda Hlousek
+    - **Lead Developer:** Wesley Maia
+
+    *© 2025 Fernanda Hlousek. All Rights Reserved.*
+    """
+)
+
 # --- Results Display Section ---
 # This block is now outside the button click, so it runs every time.
 # It will only display results if they have been generated and stored.
