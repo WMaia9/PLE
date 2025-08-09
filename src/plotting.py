@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import os
 import numpy as np
+from typing import Dict, List
 
 def plot_lamp_functions_all(all_data: dict, save_dir: str = None):
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -128,3 +129,70 @@ def plot_anisotropy_individual(samples_data: dict, save_dir: str = None):
             plt.savefig(os.path.join(save_dir, f'8_anisotropy_individual_{label}.png'))
         figs.append(fig)
     return figs
+
+def plot_emission_sliced_anisotropy(df: pd.DataFrame, save_dir: str | None = None, sample_label: str = "", xaxis: str = "lambda"):
+    if xaxis == "energy":
+        x = df["Emission Energy (eV)"]
+        xlabel = "Emission Energy (eV)"
+        suffix = "E"
+    else:
+        x = df["Emission Center (nm)"]
+        xlabel = "Emission Wavelength (nm)"
+        suffix = "nm"
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(x, df["Anisotropy (slice)"], marker="o", linestyle="-")
+    lam_ex = df["lambda_ex_star"].iloc[0]
+    ax.set_title(f"Emission-Sliced Anisotropy at λ_ex = {lam_ex:.0f} nm — {sample_label}")
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("Anisotropy (r)")
+    ax.grid(True)
+    fig.tight_layout()
+
+    if save_dir:
+        fname = f"emission_sliced_anisotropy_{sample_label}_{int(lam_ex)}nm_{suffix}.png"
+        fig.savefig(os.path.join(save_dir, fname))
+
+    return fig, ax
+
+def plot_emission_overlay_scatter(
+    per_ex_results: dict,                 # {lam_ex_star_nm: df_slice}
+    sample_label: str = "",
+    xaxis: str = "lambda",               # "lambda" or "energy"
+    xlim_nm: tuple | None = (568, 598),  # tighten to your band; set None to auto
+    ylim: tuple = (-0.024, 0.010),       # match reference scale
+):
+    fig, ax = plt.subplots(figsize=(8, 5))
+    # colors & markers like the reference (filled/hollow alternating)
+    colors  = ["tab:red", "tab:green", "tab:blue", "tab:orange", "tab:purple", "tab:brown"]
+    markers = ["s", "o", "*", "D", "P", "X", "^", "v", "<", ">"]
+
+    for i, lam_ex_star in enumerate(sorted(per_ex_results.keys())):
+        df = per_ex_results[lam_ex_star]
+        if xaxis == "energy":
+            x = df["Emission Energy (eV)"]
+            xlabel = "emission energy (eV)"
+            xlim = None
+        else:
+            x = df["Emission Center (nm)"]
+            xlabel = "emission wavelength (nm)"
+            xlim = xlim_nm
+
+        y = df["Anisotropy (slice)"]
+
+        c = colors[i % len(colors)]
+        m = markers[i % len(markers)]
+
+        # plot filled + hollow to mimic reference variety
+        ax.scatter(x, y, s=28, c=c, marker=m, linewidths=0, alpha=0.9, label=f"{int(lam_ex_star)} nm")
+        ax.scatter(x, y, s=28, facecolors="none", edgecolors=c, marker=m, linewidths=1.2, alpha=0.9)
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("anisotropy (r)")
+    if ylim: ax.set_ylim(*ylim)
+    if xlim: ax.set_xlim(*xlim)
+    ax.grid(True, alpha=0.25)
+    ax.legend(title="λ_ex", ncols=3, frameon=False, loc="upper right")
+    ax.set_title(f"Emission-sliced anisotropy — {sample_label}")
+    fig.tight_layout()
+    return fig, ax
