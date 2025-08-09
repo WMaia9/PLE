@@ -159,8 +159,8 @@ def plot_emission_overlay_scatter(
     per_ex_results: dict,                 # {lam_ex_star_nm: df_slice}
     sample_label: str = "",
     xaxis: str = "lambda",               # "lambda" or "energy"
-    xlim_nm: tuple | None = (568, 598),  # tighten to your band; set None to auto
-    ylim: tuple = (-0.024, 0.010),       # match reference scale
+    xlim_nm: tuple | None = (565, 600),  # tighten to your band; set None to auto
+    ylim: tuple = (-0.025, 0.025),       # match reference scale
 ):
     fig, ax = plt.subplots(figsize=(8, 5))
     # colors & markers like the reference (filled/hollow alternating)
