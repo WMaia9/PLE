@@ -64,7 +64,6 @@ def get_file_pairs(file_list: List) -> Tuple[Dict, Dict]:
 
 # =========================
 # Page-1 core helpers
-# (Keeps your original behavior)
 # =========================
 
 def _calculate_average_intensities(par_file, perp_file, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -140,7 +139,7 @@ def _calculate_average_intensities(par_file, perp_file, params: Dict[str, Any]) 
 
 def calculate_g_factor_from_dye(dye_pair: Dict, params: Dict[str, Any]) -> pd.DataFrame:
     """
-    Compute dye G-factor (Cj = Par/Perp) vs excitation, keeping your original structure.
+    Compute dye G-factor (Cj = Par/Perp) vs excitation.
     """
     label, file_objects = list(dye_pair.items())[0]
     print(f"\n-> Calculating G-Factor (Cj) using '{label}'...")
@@ -211,9 +210,9 @@ def process_single_sample(
     return final_df
 
 
-# =========================
-# Page-2 helpers (NEW, fixed)
-# =========================
+# ===============
+# Page-2 helpers
+# ================
 
 def _read_eem_as_columns(file_like, header_rows: int = 2):
     """
