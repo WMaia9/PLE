@@ -11,10 +11,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".
 
 from src.data_processing import (
     get_file_pairs,
-    emission_sliced_anisotropy_at_fixed_exc,  # fixed in data_processing to use excitation *columns*
+    emission_sliced_anisotropy_at_fixed_exc,  # must exist in src/data_processing.py
 )
 from src.plotting import (
-    plot_emission_overlay_scatter,  # new scatter overlay that matches your reference style
+    plot_emission_overlay_scatter,  # scatter overlay that matches the reference style
 )
 
 st.set_page_config(page_title="Anisotropy vs. Emission", layout="wide")
@@ -54,9 +54,13 @@ if missing:
 # ---------------- UI ----------------
 st.sidebar.header("Slicing Parameters")
 lambda_ex_list_str = st.sidebar.text_input("Fixed excitation(s) in nm (comma-separated)", value="532, 561")
+
+# Use the exact combo that worked for you (points-based window)
 slice_points = int(st.sidebar.number_input("Emission slice width (points)", min_value=1, max_value=101, value=15, step=1))
-num_slices   = int(st.sidebar.number_input("Number of slices", min_value=5, max_value=100, value=15, step=1))
-xlim_min, xlim_max = 568.0, 598.0  # default window to mimic the reference figure
+num_slices   = int(st.sidebar.number_input("Number of slices",            min_value=5, max_value=100, value=15, step=1))
+
+# Overlay axes to match the reference look
+xlim_min, xlim_max = 568.0, 598.0
 ylim_min, ylim_max = -0.024, 0.010
 
 # Parse excitation list
@@ -69,7 +73,8 @@ for token in lambda_ex_list_str.split(","):
         except ValueError:
             st.error(f"Invalid excitation value: {token}")
 
-background = float(st.session_state.params.get("background", 0.0))
+# Pull common params from Page 1 (background stays 990 as you requested)
+background = float(st.session_state.params.get("background", 990.0))
 lambda_0_dict = st.session_state.params.get("lambda_0_dict", {})  # filename -> nm
 
 # ---------------- Utilities ----------------
@@ -100,7 +105,7 @@ def infer_emission_axis_from_csv(file_like) -> np.ndarray:
 # ---------------- Build pairs from uploaded files ----------------
 dye_pair, sample_pairs = get_file_pairs(uploaded_files)  # (dye_pair_obj, sample_pairs_obj)
 
-# Resolve dye file objects (not strictly needed for Page 2 math, but we keep parity)
+# Resolve dye file objects (kept for signature parity)
 dye_label = list(dye_pair.keys())[0]
 dye_par  = dye_pair[dye_label]["parallel"]
 dye_perp = dye_pair[dye_label]["perpendicular"]
@@ -122,12 +127,18 @@ if st.button("Compute emission-sliced anisotropy", type="primary"):
                 st.error(f"Missing λ₀ for sample '{sample_label}'. Set it on Page 1.")
                 continue
 
-            # Emission axis from parallel CSV (same as Page-1 convention)
+            # Emission axis from parallel CSV (same convention as Page 1)
             try:
                 lambda_em_local = infer_emission_axis_from_csv(spair["parallel"])
             except Exception as ex:
                 st.error(f"Could not infer emission axis for '{sample_label}': {ex}")
                 continue
+
+            # Show the effective window so you can confirm it (~25–30 nm)
+            if len(lambda_em_local) > 1:
+                em_step = float(np.median(np.diff(lambda_em_local)))
+                est_window_nm = em_step * (slice_points * num_slices)
+                st.caption(f"{sample_label}: estimated emission step ≈ {em_step:.3f} nm • total window ≈ {est_window_nm:.1f} nm")
 
             per_ex_results = {}
             for lam_ex_star in lambda_ex_list:
@@ -135,8 +146,8 @@ if st.button("Compute emission-sliced anisotropy", type="primary"):
                     df_slice = emission_sliced_anisotropy_at_fixed_exc(
                         sample_par_path = spair["parallel"],
                         sample_perp_path= spair["perpendicular"],
-                        dye_par_path    = dye_par,   # kept for signature parity
-                        dye_perp_path   = dye_perp,  # kept for signature parity
+                        dye_par_path    = dye_par,   # signature parity
+                        dye_perp_path   = dye_perp,  # signature parity
                         lambda_em       = lambda_em_local,
                         lambda_ex       = np.asarray(lambda_ex, dtype=float),
                         lambda_0        = float(lam0),
@@ -162,7 +173,7 @@ if "sliced_results" in st.session_state:
     for sample_label, ex_map in st.session_state.sliced_results.items():
         st.subheader(f"Sample: {sample_label}")
 
-        # Overlay scatter (matches your reference style; tight y/x ranges)
+        # Overlay scatter (matches your reference style; tight axes)
         fig_overlay, _ = plot_emission_overlay_scatter(
             ex_map,
             sample_label=sample_label,
@@ -172,7 +183,7 @@ if "sliced_results" in st.session_state:
         )
         st.pyplot(fig_overlay)
 
-        # Optional: also show each per-λ_ex table
+        # Optional: per-λ_ex tables & downloads
         with st.expander("Show per-excitation tables"):
             for lam_ex_star, df_slice in ex_map.items():
                 st.markdown(f"**λ_ex = {int(lam_ex_star)} nm**")

@@ -263,24 +263,30 @@ def emission_sliced_anisotropy_at_fixed_exc(
     num_slices: int = 15,
 ) -> pd.DataFrame:
     """
-    Slice anisotropy across EMISSION for a fixed excitation λ_ex*.
-    CSV layout:
-      col0 = λ_em, cols1.. = intensities per excitation, LAST ROW = lamp per excitation.
+    Slice anisotropy across EMISSION for a fixed excitation λ_ex* using the
+    same conventions as Page 1:
+
+      CSV layout:
+        - col0 = λ_em
+        - cols1.. = intensities per excitation (one col per λ_ex)
+        - LAST ROW = lamp per excitation (across cols1..)
+
+      Steps (per slice):
+        (Ipar - background)/L*  and  (Iperp - background)/L* · C*
+        r = (I∥ - I⊥*) / (I∥ + 2 I⊥*)
     """
-    # --- normalize all inputs ---
-    lambda_ex = np.asarray(lambda_ex, dtype=float)
-    Cj_vector = np.asarray(Cj_vector, dtype=float)
-    lambda_em = np.asarray(lambda_em, dtype=float)
+    # normalize inputs
+    lambda_ex      = np.asarray(lambda_ex, dtype=float)
+    Cj_vector      = np.asarray(Cj_vector, dtype=float)
+    lambda_em      = np.asarray(lambda_em, dtype=float)
+    lambda_0       = float(lambda_0)
     lambda_ex_star = float(lambda_ex_star)
-    lambda_0 = float(lambda_0)
-    slice_points = int(slice_points)
-    num_slices = int(num_slices)
+    slice_points   = int(slice_points)
+    num_slices     = int(num_slices)
 
-    # Load EEMs in "columns" form
-    lam_em_par, PAR, L_par = _read_eem_as_columns(sample_par_path)
-    lam_em_perp, PERP, L_perp = _read_eem_as_columns(sample_perp_path)
-
-    # Sanity
+    # load matrices (column layout)
+    lam_em_par, PAR, L_par   = _read_eem_as_columns(sample_par_path)
+    lam_em_perp, PERP, L_perp= _read_eem_as_columns(sample_perp_path)
     if not np.array_equal(lam_em_par, lam_em_perp):
         raise ValueError("Emission axes differ between PAR and PERP files.")
     if lambda_em.size == 0:
@@ -288,57 +294,54 @@ def emission_sliced_anisotropy_at_fixed_exc(
     if PAR.shape != PERP.shape:
         raise ValueError(f"PAR/PERP shape mismatch: {PAR.shape} vs {PERP.shape}")
     if L_par.shape[0] != PAR.shape[1] or L_perp.shape[0] != PAR.shape[1]:
-        raise ValueError("Lamp vectors length must match number of excitation columns.")
+        raise ValueError("Lamp length must match number of excitation columns.")
 
-    # Choose excitation column j* (INT!)
+    # excitation column index (INT)
     j_star = int(np.argmin(np.abs(lambda_ex - lambda_ex_star)))
 
-    # Take emission column at j*
-    v_par_raw  = np.asarray(PAR[:, j_star], dtype=float)
-    v_perp_raw = np.asarray(PERP[:, j_star], dtype=float)
+    # emission vectors at λ_ex*
+    v_par_raw  = PAR[:, j_star].astype(float)
+    v_perp_raw = PERP[:, j_star].astype(float)
 
-    # Lamp at that excitation (average par/perp lamp if both valid)
-    L_candidates = []
-    for Lvec in (L_par, L_perp):
-        try:
-            L_candidates.append(float(Lvec[int(j_star)]))
-        except Exception:
-            pass
-    if not L_candidates or not np.isfinite(np.mean(L_candidates)) or np.mean(L_candidates) == 0:
-        raise ValueError("Invalid lamp value at selected excitation.")
+    # lamp at that excitation (use mean of par/perp lamp if both valid)
+    L_candidates = [L_par[j_star], L_perp[j_star]]
+    L_candidates = [float(x) for x in L_candidates if np.isfinite(x) and x != 0]
+    if not L_candidates:
+        raise ValueError("Invalid lamp at selected excitation.")
     L_star = float(np.mean(L_candidates))
 
-    # Emission window (points) centered at λ0
+    # C* at λ_ex* — **match Page 1 (use index, no interpolation)**
+    if Cj_vector.shape[0] != lambda_ex.shape[0]:
+        raise ValueError("Cj_vector and lambda_ex must have the same length.")
+    C_star = float(Cj_vector[j_star])
+
+    # points-based window centered at λ0 (keeps your UI)
     total_pts = slice_points * num_slices
     i0_center = int(np.argmin(np.abs(lambda_em - lambda_0)))
     half_span = total_pts // 2
     i0 = max(0, i0_center - half_span)
     i1 = min(len(lambda_em), i0_center + half_span)
 
-    v_par_win  = v_par_raw[i0:i1]
-    v_perp_win = v_perp_raw[i0:i1]
-    lamb_win   = lambda_em[i0:i1]
+    lam_win  = lambda_em[i0:i1]
+    vpar_win = v_par_raw[i0:i1]
+    vperp_win= v_perp_raw[i0:i1]
 
-    usable = (len(lamb_win) // slice_points) * slice_points
+    usable = (len(lam_win) // slice_points) * slice_points
     if usable == 0:
         raise ValueError("Window too small for the chosen slice width/number of slices.")
-    v_par_win  = v_par_win[:usable]
-    v_perp_win = v_perp_win[:usable]
-    lamb_win   = lamb_win[:usable]
+    lam_win  = lam_win[:usable]
+    vpar_win = vpar_win[:usable]
+    vperp_win= vperp_win[:usable]
+
     num_slices_eff = min(num_slices, usable // slice_points)
 
-    # Interpolate C*(λ_ex*) to avoid off-by-one artifacts
-    if Cj_vector.shape[0] != lambda_ex.shape[0]:
-        raise ValueError("Cj_vector and lambda_ex must have the same length.")
-    C_star = float(np.interp(lambda_ex_star, lambda_ex, Cj_vector))
-
-    # Compute anisotropy per slice
-    r_list, lamb_center = [], []
+    # compute per-slice anisotropy
+    r_list, centers_nm = [], []
     w = slice_points
     for i in range(num_slices_eff):
         a, b = i * w, (i + 1) * w
-        par_mean  = float(np.mean(v_par_win[a:b]))
-        perp_mean = float(np.mean(v_perp_win[a:b]))
+        par_mean  = float(np.mean(vpar_win[a:b]))
+        perp_mean = float(np.mean(vperp_win[a:b]))
 
         Ipar_corr  = (par_mean  - float(background)) / L_star
         Iperp_corr = (perp_mean - float(background)) / L_star
@@ -348,12 +351,13 @@ def emission_sliced_anisotropy_at_fixed_exc(
         r = np.nan if denom == 0 else (Ipar_corr - Iperp_corr_star) / denom
         r_list.append(r)
 
-        lamb_center.append(float(np.mean(lamb_win[a:b])))
+        centers_nm.append(float(np.mean(lam_win[a:b])))
 
-    E_emit = 1240.0 / np.array(lamb_center, dtype=float)
+    centers_nm = np.asarray(centers_nm, dtype=float)
+    E_emit = 1240.0 / centers_nm
 
     return pd.DataFrame({
-        "Emission Center (nm)": lamb_center,
+        "Emission Center (nm)": centers_nm,
         "Emission Energy (eV)": E_emit,
         "Anisotropy (slice)": r_list,
         "lambda_ex_star": float(lambda_ex_star),
