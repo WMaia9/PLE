@@ -63,6 +63,21 @@ num_slices   = int(st.sidebar.number_input("Number of slices",            min_va
 xlim_min, xlim_max = 568.0, 598.0
 ylim_min, ylim_max = -0.024, 0.010
 
+# ---------------- About (sidebar) ----------------
+st.sidebar.markdown("---")
+st.sidebar.header("About")
+st.sidebar.markdown(
+    """
+    This application was developed as a project by students from the 
+    **University of California, Merced**.
+
+    - **Intellectual Property:** Fernanda Hlousek  
+    - **Lead Developer:** Wesley Maia
+
+    *© 2025 Fernanda Hlousek. All Rights Reserved.*
+    """
+)
+
 # Parse excitation list
 lambda_ex_list = []
 for token in lambda_ex_list_str.split(","):
