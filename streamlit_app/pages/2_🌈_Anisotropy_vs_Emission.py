@@ -42,9 +42,14 @@ if lambda_ex is None and g_factor_df is not None:
             break
 
 if Cj_vector is None and g_factor_df is not None:
-    cj_col = next((c for c in ["Cj (Par / Perp)", "Cj", "G_factor", "G (Par/Perp)"] if c in g_factor_df.columns), None)
-    if cj_col:
-        Cj_vector = g_factor_df[cj_col].to_numpy()
+    if "Cj Smoothed" in g_factor_df.columns:
+        Cj_vector = g_factor_df["Cj Smoothed"].to_numpy()
+        st.info("ℹ️ Using smoothed Cj vector for emission-based anisotropy calculations.")
+    else:
+        cj_col = next((c for c in ["Cj (Par / Perp)", "Cj", "G_factor", "G (Par/Perp)"] if c in g_factor_df.columns), None)
+        if cj_col:
+            Cj_vector = g_factor_df[cj_col].to_numpy()
+
 
 missing = [k for k, v in dict(lambda_ex=lambda_ex, Cj_vector=Cj_vector).items() if v is None]
 if missing:

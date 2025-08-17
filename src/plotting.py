@@ -196,3 +196,29 @@ def plot_emission_overlay_scatter(
     ax.set_title(f"Emission-sliced anisotropy — {sample_label}")
     fig.tight_layout()
     return fig, ax
+
+def plot_correction_factor_smoothed(df: pd.DataFrame, save_dir: str = None):
+    """
+    Plots original and smoothed Cj (correction factor) curves.
+
+    Parameters:
+        df (pd.DataFrame): DataFrame with 'Cj (Par / Perp)' and 'Cj Smoothed' columns
+        save_dir (str, optional): Path to save PNG image (if provided)
+
+    Returns:
+        fig, ax: Matplotlib figure and axis
+    """
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(df["Excitation Wavelength (nm)"], df["Cj (Par / Perp)"], linestyle="--", label="Original Cj", alpha=0.6)
+    ax.plot(df["Excitation Wavelength (nm)"], df["Cj Smoothed"], linewidth=2, label="Smoothed Cj")
+    ax.set_title("Smoothed Correction Factor (Savitzky-Golay)")
+    ax.set_xlabel("Excitation Wavelength (nm)")
+    ax.set_ylabel("G-Factor (Cj)")
+    ax.grid(True)
+    ax.legend()
+    plt.tight_layout()
+
+    if save_dir:
+        plt.savefig(os.path.join(save_dir, "correction_factor_smoothed.png"))
+
+    return fig, ax

@@ -1,5 +1,7 @@
 # streamlit_app/pages/1_Anisotropy_vs_Excitation.py
 
+# ------------ Imports ----------------
+
 import sys
 import os
 import io
@@ -7,6 +9,7 @@ import zipfile
 from datetime import datetime
 
 import streamlit as st
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import yaml
@@ -14,7 +17,16 @@ import yaml
 # We are inside /streamlit_app/pages now — go two levels up so "src" is importable
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from src.data_processing import get_file_pairs, calculate_g_factor_from_dye, process_single_sample
+# CORRETO:
+from src.data_processing import (
+    get_file_pairs,
+    calculate_g_factor_from_dye,
+    process_single_sample,
+    smooth_cj_vector,
+    smooth_cj_moving_average,
+    smooth_cj_gaussian
+)
+
 from src.plotting import (
     plot_lamp_functions_all,
     plot_raw_vs_lamp_corrected_all,
@@ -24,6 +36,7 @@ from src.plotting import (
     plot_corrected_intensities_all_samples,
     plot_anisotropy_all_samples,
     plot_anisotropy_individual,
+    plot_correction_factor_smoothed, 
 )
 
 # ---------------- Helper ----------------
@@ -109,10 +122,17 @@ if "results_generated" not in st.session_state:
     st.session_state.results_generated = False
 
 if uploaded_files:
+    st.sidebar.subheader("Advanced Options")
+    smoothing_option = st.sidebar.selectbox(
+    "🧹 Apply Smoothing to Correction Curve (Cj)",
+    ["None", "Moving Average", "Savitzky-Golay", "Gaussian"],
+    index=0
+)
     params = {}
     st.sidebar.subheader("Global Parameters")
     params["background"] = st.sidebar.number_input("Background Level", value=990.0)
     params["window_size"] = st.sidebar.number_input("Window Size (points)", value=15, min_value=3, step=2)
+    params["smoothing_option"] = smoothing_option
 
     st.sidebar.subheader("Peak Emission λ₀ (nm)")
 
@@ -139,7 +159,34 @@ if uploaded_files:
                 dye_pair_obj, sample_pairs_obj = get_file_pairs(uploaded_files)
 
                 # 1) Dye G-factor (Cj) table using your original function
+                # 1) Dye G-factor (Cj) table using your original function
                 g_factor_df = calculate_g_factor_from_dye(dye_pair_obj, params)
+
+                # ⬇️ Apply smoothing to Cj based on selected option
+                cj_col = next((c for c in ["Cj (Par / Perp)", "Cj", "G_factor", "G (Par/Perp)"] if c in g_factor_df.columns), None)
+
+                if cj_col:
+                    cj_values = g_factor_df[cj_col].to_numpy()
+                    cj_smoothed = None
+
+                    try:
+                        if smoothing_option == "Moving Average":
+                            cj_smoothed = smooth_cj_moving_average(cj_values, window_size=params["window_size"])
+
+                        elif smoothing_option == "Savitzky-Golay":
+                            cj_smoothed = smooth_cj_vector(cj_values, window_length=params["window_size"], polyorder=2)
+
+                        elif smoothing_option == "Gaussian":
+                            cj_smoothed = smooth_cj_gaussian(cj_values, sigma=2.0)
+
+                        if cj_smoothed is not None:
+                            g_factor_df["Cj Smoothed"] = cj_smoothed
+                            st.info(f"✅ Smoothing method applied: {smoothing_option}")
+
+                    except Exception as e:
+                        st.warning(f"Smoothing failed: {e}")
+                else:
+                    st.warning("Cj column not found. Smoothing skipped.")
 
                 # 2) Process each sample (emission-averaged anisotropy)
                 samples_results_dict = {}
@@ -233,38 +280,70 @@ if st.session_state.results_generated:
         st.dataframe(df, use_container_width=True)
 
     # Plots
+    # Display Plots
     st.header("Diagnostic Plots")
 
+    # Parse dye label for grouping
     dye_pair_names, _ = get_file_pairs(file_names)
     dye_label = list(dye_pair_names.keys())[0]
 
+    # Prepare results for plotting
     dye_results_dict_for_plot = g_factor_df.to_dict("list")
     samples_for_plotting = {label: df.to_dict("list") for label, df in samples_results_dict.items()}
     all_files_results = {dye_label: dye_results_dict_for_plot, **samples_for_plotting}
 
-    fig1, _ = plot_lamp_functions_all(all_files_results)
-    st.pyplot(fig1)
+    # --- G-Factor (Dye) Analysis ---
+    fig_dye_g, _ = plot_correction_factor(g_factor_df)
+    st.subheader("Correction Factor (Cj or G-Factor) – Original")
+    st.pyplot(fig_dye_g)
 
-    fig2, _ = plot_raw_vs_lamp_corrected_all(all_files_results)
-    st.pyplot(fig2)
+    if smoothing_option != "None" and "Cj Smoothed" in g_factor_df.columns:
+        fig_dye_smooth, _ = plot_correction_factor_smoothed(g_factor_df)
+        st.subheader(f"Correction Factor (Cj) – Smoothed ({smoothing_option})")
+        st.pyplot(fig_dye_smooth)
 
-    fig3, _ = plot_sample_corrected_only(samples_results_dict)
-    st.pyplot(fig3)
+        # Replace Cj column in g_factor_df for display and export
+        cj_col = next((c for c in ["Cj (Par / Perp)", "Cj", "G_factor", "G (Par/Perp)"] if c in g_factor_df.columns), None)
+        if cj_col:
+            g_factor_df[cj_col] = g_factor_df["Cj Smoothed"]
+            st.success(f"✅ Smoothed values are now replacing '{cj_col}' in G-Factor Data for downstream calculations.")
 
-    fig4, _ = plot_correction_factor(g_factor_df)
-    st.pyplot(fig4)
+            # Inject smoothed Cj into each sample’s Correction Factor column
+            for sample_label, df in samples_results_dict.items():
+                if "Excitation Wavelength (nm)" in df.columns:
+                    excitation = df["Excitation Wavelength (nm)"]
+                    cj_interp = np.interp(excitation, g_factor_df["Excitation Wavelength (nm)"], g_factor_df["Cj Smoothed"])
+                    df["Correction Factor (Cj)"] = cj_interp  # ✅ Replaces old Cj
 
-    fig5, _ = plot_dye_intensity_comparison(g_factor_df)
-    st.pyplot(fig5)
+    fig_dye_comp, _ = plot_dye_intensity_comparison(g_factor_df)
+    st.subheader("Dye: Parallel vs Perpendicular Intensity")
+    st.pyplot(fig_dye_comp)
 
-    fig6, _ = plot_corrected_intensities_all_samples(samples_results_dict)
-    st.pyplot(fig6)
+    # --- Lamp and Correction ---
+    fig_lamp, _ = plot_lamp_functions_all(all_files_results)
+    st.subheader("Lamp Functions – All Samples")
+    st.pyplot(fig_lamp)
 
-    fig7, _ = plot_anisotropy_all_samples(samples_results_dict)
-    st.pyplot(fig7)
+    fig_raw_corr, _ = plot_raw_vs_lamp_corrected_all(all_files_results)
+    st.subheader("Raw vs Lamp-Corrected – All Samples")
+    st.pyplot(fig_raw_corr)
 
-    figs_individual = plot_anisotropy_individual(samples_results_dict)
-    for fig in figs_individual:
+    fig_corrected, _ = plot_sample_corrected_only(samples_results_dict)
+    st.subheader("Corrected Intensities – Individual Samples")
+    st.pyplot(fig_corrected)
+
+    # --- Post-correction Results ---
+    fig_all_corrected, _ = plot_corrected_intensities_all_samples(samples_results_dict)
+    st.subheader("Corrected Intensities – All Samples")
+    st.pyplot(fig_all_corrected)
+
+    fig_aniso_all, _ = plot_anisotropy_all_samples(samples_results_dict)
+    st.subheader("Anisotropy – All Samples")
+    st.pyplot(fig_aniso_all)
+
+    figs_aniso_individual = plot_anisotropy_individual(samples_results_dict)
+    st.subheader("Anisotropy – Individual Samples")
+    for fig in figs_aniso_individual:
         st.pyplot(fig)
 
 elif not uploaded_files:

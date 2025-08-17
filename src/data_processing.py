@@ -7,6 +7,8 @@ from typing import Dict, Any, List, Tuple
 
 import numpy as np
 import pandas as pd
+from scipy.signal import savgol_filter
+from scipy.ndimage import gaussian_filter1d
 
 
 # =========================
@@ -167,6 +169,55 @@ def calculate_g_factor_from_dye(dye_pair: Dict, params: Dict[str, Any]) -> pd.Da
     g_factor_df["par_avg_raw"] = dye_results["par_avg_raw"]
     return g_factor_df
 
+def smooth_cj_vector(cj_array: np.ndarray, window_length: int = 15, polyorder: int = 3) -> np.ndarray:
+    """
+    Applies Savitzky-Golay filter to smooth the Cj (G-factor) curve.
+
+    Parameters:
+        cj_array (np.ndarray): Raw Cj values
+        window_length (int): Window size (must be odd)
+        polyorder (int): Polynomial degree for smoothing
+
+    Returns:
+        np.ndarray: Smoothed Cj values
+    """
+    n = len(cj_array)
+    if n < window_length:
+        window_length = n if n % 2 == 1 else n - 1
+    if window_length < 3:
+        return cj_array  # Not enough points to smooth
+    return savgol_filter(cj_array, window_length=window_length, polyorder=polyorder)
+
+def smooth_cj_moving_average(cj_array: np.ndarray, window_size: int = 9) -> np.ndarray:
+    """
+    Apply moving average smoothing to Cj array.
+
+    Parameters:
+        cj_array (np.ndarray): Raw Cj values
+        window_size (int): Size of the rolling window (must be odd)
+
+    Returns:
+        np.ndarray: Smoothed Cj values
+    """
+    if window_size % 2 == 0:
+        window_size += 1
+    cj_series = pd.Series(cj_array)
+    return cj_series.rolling(window=window_size, center=True).mean().to_numpy()
+
+
+def smooth_cj_gaussian(cj_array: np.ndarray, sigma: float = 1.2) -> np.ndarray:
+    """
+    Apply Gaussian filter to Cj array.
+
+    Parameters:
+        cj_array (np.ndarray): Raw Cj values
+        sigma (float): Standard deviation for Gaussian kernel
+
+    Returns:
+        np.ndarray: Smoothed Cj values
+    """
+    return gaussian_filter1d(cj_array, sigma=sigma)
+
 
 def process_single_sample(
     sample_label: str,
@@ -182,7 +233,10 @@ def process_single_sample(
         sample_pair["parallel"], sample_pair["perpendicular"], params
     )
 
-    Cj = g_factor_df["Cj (Par / Perp)"].to_numpy()
+    cj_col = "Cj (Par / Perp)"
+    if "Cj Smoothed" in g_factor_df.columns:
+        cj_col = "Cj Smoothed"
+    Cj = g_factor_df[cj_col].to_numpy()
     perp_corrected = sample_results["perp_avg_lamp_corr"] * Cj
     par_avg = sample_results["par_avg_lamp_corr"]
 
