@@ -36,7 +36,17 @@ from src.plotting import (
     plot_corrected_intensities_all_samples,
     plot_anisotropy_all_samples,
     plot_anisotropy_individual,
-    plot_correction_factor_smoothed, 
+    plot_correction_factor_smoothed,
+    # Import new plotly functions
+    plot_lamp_functions_all_plotly,
+    plot_raw_vs_lamp_corrected_all_plotly,
+    plot_sample_corrected_only_plotly,
+    plot_correction_factor_plotly,
+    plot_dye_intensity_comparison_plotly,
+    plot_corrected_intensities_all_samples_plotly,
+    plot_anisotropy_all_samples_plotly,
+    plot_anisotropy_individual_plotly,
+    plot_correction_factor_smoothed_plotly,
 )
 
 # ---------------- Helper ----------------
@@ -75,7 +85,7 @@ def create_zip_in_memory(params, file_names, g_factor_df, samples_results_dict) 
             zip_file.writestr(f"plots/{name}.png", img_buffer.getvalue())
             plt.close(fig)
 
-        # Plots
+        # Plots (using matplotlib functions)
         fig1, _ = plot_lamp_functions_all(all_files_results)
         save_fig_to_zip(fig1, "1_lamp_functions_all")
 
@@ -158,7 +168,6 @@ if uploaded_files:
                 # For the pipeline, we pass file OBJECTS (not names)
                 dye_pair_obj, sample_pairs_obj = get_file_pairs(uploaded_files)
 
-                # 1) Dye G-factor (Cj) table using your original function
                 # 1) Dye G-factor (Cj) table using your original function
                 g_factor_df = calculate_g_factor_from_dye(dye_pair_obj, params)
 
@@ -293,14 +302,14 @@ if st.session_state.results_generated:
     all_files_results = {dye_label: dye_results_dict_for_plot, **samples_for_plotting}
 
     # --- G-Factor (Dye) Analysis ---
-    fig_dye_g, _ = plot_correction_factor(g_factor_df)
     st.subheader("Correction Factor (Cj or G-Factor) – Original")
-    st.pyplot(fig_dye_g)
+    fig_dye_g = plot_correction_factor_plotly(g_factor_df)
+    st.plotly_chart(fig_dye_g)
 
-    if smoothing_option != "None" and "Cj Smoothed" in g_factor_df.columns:
-        fig_dye_smooth, _ = plot_correction_factor_smoothed(g_factor_df)
-        st.subheader(f"Correction Factor (Cj) – Smoothed ({smoothing_option})")
-        st.pyplot(fig_dye_smooth)
+    if params.get("smoothing_option") != "None" and "Cj Smoothed" in g_factor_df.columns:
+        st.subheader(f"Correction Factor (Cj) – Smoothed ({params.get('smoothing_option')})")
+        fig_dye_smooth = plot_correction_factor_smoothed_plotly(g_factor_df)
+        st.plotly_chart(fig_dye_smooth)
 
         # Replace Cj column in g_factor_df for display and export
         cj_col = next((c for c in ["Cj (Par / Perp)", "Cj", "G_factor", "G (Par/Perp)"] if c in g_factor_df.columns), None)
@@ -315,36 +324,36 @@ if st.session_state.results_generated:
                     cj_interp = np.interp(excitation, g_factor_df["Excitation Wavelength (nm)"], g_factor_df["Cj Smoothed"])
                     df["Correction Factor (Cj)"] = cj_interp  # ✅ Replaces old Cj
 
-    fig_dye_comp, _ = plot_dye_intensity_comparison(g_factor_df)
     st.subheader("Dye: Parallel vs Perpendicular Intensity")
-    st.pyplot(fig_dye_comp)
+    fig_dye_comp = plot_dye_intensity_comparison_plotly(g_factor_df)
+    st.plotly_chart(fig_dye_comp)
 
     # --- Lamp and Correction ---
-    fig_lamp, _ = plot_lamp_functions_all(all_files_results)
     st.subheader("Lamp Functions – All Samples")
-    st.pyplot(fig_lamp)
+    fig_lamp = plot_lamp_functions_all_plotly(all_files_results)
+    st.plotly_chart(fig_lamp)
 
-    fig_raw_corr, _ = plot_raw_vs_lamp_corrected_all(all_files_results)
     st.subheader("Raw vs Lamp-Corrected – All Samples")
-    st.pyplot(fig_raw_corr)
+    fig_raw_corr = plot_raw_vs_lamp_corrected_all_plotly(all_files_results)
+    st.plotly_chart(fig_raw_corr)
 
-    fig_corrected, _ = plot_sample_corrected_only(samples_results_dict)
     st.subheader("Corrected Intensities – Individual Samples")
-    st.pyplot(fig_corrected)
+    fig_corrected = plot_sample_corrected_only_plotly(samples_results_dict)
+    st.plotly_chart(fig_corrected)
 
     # --- Post-correction Results ---
-    fig_all_corrected, _ = plot_corrected_intensities_all_samples(samples_results_dict)
     st.subheader("Corrected Intensities – All Samples")
-    st.pyplot(fig_all_corrected)
+    fig_all_corrected = plot_corrected_intensities_all_samples_plotly(samples_results_dict)
+    st.plotly_chart(fig_all_corrected)
 
-    fig_aniso_all, _ = plot_anisotropy_all_samples(samples_results_dict)
     st.subheader("Anisotropy – All Samples")
-    st.pyplot(fig_aniso_all)
+    fig_aniso_all = plot_anisotropy_all_samples_plotly(samples_results_dict)
+    st.plotly_chart(fig_aniso_all)
 
-    figs_aniso_individual = plot_anisotropy_individual(samples_results_dict)
     st.subheader("Anisotropy – Individual Samples")
+    figs_aniso_individual = plot_anisotropy_individual_plotly(samples_results_dict)
     for fig in figs_aniso_individual:
-        st.pyplot(fig)
+        st.plotly_chart(fig)
 
 elif not uploaded_files:
     st.info("Please upload your CSV data files to begin.")
