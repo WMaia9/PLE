@@ -153,10 +153,11 @@ st.sidebar.header("Analysis Parameters")
 
 # Choose correction method first
 st.sidebar.subheader("Correction Method")
+_default_method = st.session_state.get("params", {}).get("correction_method", "Use dye (vector Cj)")
 correction_method = st.sidebar.radio(
     "Choose correction method",
     ["Use dye (vector Cj)", "No dye (scalar C*)"],
-    index=0,
+    index=0 if _default_method == "Use dye (vector Cj)" else 1,
 )
 
 # Global fallback only; actual λ_ref is chosen later in No-dye flow
@@ -167,6 +168,11 @@ uploaded_files = st.sidebar.file_uploader(
     type=["csv"],
     accept_multiple_files=True,
 )
+
+# Reuse files from session so you don't need to re-upload when navigating back
+if not uploaded_files and st.session_state.get("uploaded_files"):
+    uploaded_files = st.session_state.uploaded_files
+    st.sidebar.caption("Using previously uploaded files from session.")
 
 # Initialize session state keys once
 if "results_generated" not in st.session_state:
@@ -396,6 +402,24 @@ if st.session_state.get("phase") == "pick_ref":
         st.session_state.results_generated = True
         st.session_state.phase = "done"
         st.success("Results generated. Scroll down to see tables and plots.")
+
+# ---------- Quick action: re-open No-dye picker without re-uploading ----------
+if (
+    st.session_state.get("results_generated")
+    and st.session_state.get("params", {}).get("correction_method") == "No dye (scalar C*)"
+    and st.session_state.get("uploaded_files")
+):
+    if st.button("🔁 Re-pick reference (No dye)"):
+        try:
+            # Rebuild sample pairs from stored files and enter pick_ref phase
+            sample_pairs_obj = _pair_sample_files_loose(st.session_state.uploaded_files)
+            st.session_state.sample_pairs_obj_store = sample_pairs_obj
+            st.session_state.phase = "pick_ref"
+            # Hide results until user saves the new reference
+            st.session_state.results_generated = False
+            st.rerun()
+        except Exception as e:
+            st.error(f"Could not re-open reference picker: {e}")
 
 # ---------------- Results section ----------------
 if st.session_state.results_generated:

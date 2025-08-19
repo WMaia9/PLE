@@ -89,7 +89,7 @@ def _calculate_average_intensities(par_file, perp_file, params: Dict[str, Any]) 
             perp_file.seek(0)
     except Exception:
         pass
-        
+
     par_df = pd.read_csv(par_file, header=None).drop(index=[0, 1]).reset_index(drop=True).astype(float)
     perp_df = pd.read_csv(perp_file, header=None).drop(index=[0, 1]).reset_index(drop=True).astype(float)
 
@@ -274,8 +274,6 @@ def process_single_sample(
     print(f"\n--- Results Table for '{sample_label}' ---")
     print(final_df.head(10))
     return final_df
-
-# put this next to process_single_sample in src/data_processing.py
 
 def process_single_sample_no_dye(
     sample_label: str,
@@ -480,6 +478,111 @@ def emission_sliced_anisotropy_at_fixed_exc(
         denom = Ipar_corr + 2.0 * Iperp_corr_star
         r = np.nan if denom == 0 else (Ipar_corr - Iperp_corr_star) / denom
         r_list.append(r)
+
+        centers_nm.append(float(np.mean(lam_win[a:b])))
+
+    centers_nm = np.asarray(centers_nm, dtype=float)
+    E_emit = 1240.0 / centers_nm
+
+    return pd.DataFrame({
+        "Emission Center (nm)": centers_nm,
+        "Emission Energy (eV)": E_emit,
+        "Anisotropy (slice)": r_list,
+        "lambda_ex_star": float(lambda_ex_star),
+        "lambda_0": float(lambda_0),
+    })
+
+def emission_sliced_anisotropy_no_dye(
+    sample_par_path,
+    sample_perp_path,
+    lambda_em,              # can be [] -> will be inferred from file
+    lambda_ex,              # vector used ONLY to locate index j*; pass the same used in Page 1 (arange(450,...))
+    lambda_0: float,        # center of the emission window (nm)
+    lambda_ex_star: float,  # chosen excitation (nm)
+    background: float,
+    slice_points: int = 15,
+    num_slices: int = 15,
+) -> pd.DataFrame:
+    """
+    NO-DYE slice-wise method for Page 2.
+    For the chosen λ_ex*, compute:
+      - per-slice means in emission window around λ0
+      - background/lamp correction (use L* for that λ_ex*)
+      - slice-wise scalar C*_i = I∥/I⊥
+      - r_i = (I∥ - C*_i I⊥) / (I∥ + 2 C*_i I⊥)
+    """
+    lambda_ex      = np.asarray(lambda_ex, dtype=float)
+    lambda_0       = float(lambda_0)
+    lambda_ex_star = float(lambda_ex_star)
+    slice_points   = int(slice_points)
+    num_slices     = int(num_slices)
+
+    lam_em_par, PAR, L_par    = _read_eem_as_columns(sample_par_path)
+    lam_em_perp, PERP, L_perp = _read_eem_as_columns(sample_perp_path)
+    if not np.array_equal(lam_em_par, lam_em_perp):
+        raise ValueError("Emission axes differ between PAR and PERP files.")
+    if PAR.shape != PERP.shape:
+        raise ValueError(f"PAR/PERP shape mismatch: {PAR.shape} vs {PERP.shape}")
+    if L_par.shape[0] != PAR.shape[1] or L_perp.shape[0] != PAR.shape[1]:
+        raise ValueError("Lamp length must match number of excitation columns.")
+
+    if lambda_em is None or len(lambda_em) == 0:
+        lambda_em = lam_em_par
+
+    # Excitation index j* from PAGE 1 convention (nearest index; no interpolation)
+    j_star = int(np.argmin(np.abs(lambda_ex - lambda_ex_star)))
+
+    # Raw emission vectors at λ_ex*
+    v_par_raw  = PAR[:, j_star].astype(float)
+    v_perp_raw = PERP[:, j_star].astype(float)
+
+    # Lamp at that excitation (mean of available)
+    L_candidates = [L_par[j_star], L_perp[j_star]]
+    L_candidates = [float(x) for x in L_candidates if np.isfinite(x) and x != 0]
+    if not L_candidates:
+        raise ValueError("Invalid lamp at selected excitation.")
+    L_star = float(np.mean(L_candidates))
+
+    # Build emission window around λ0 with total points = slice_points * num_slices
+    total_pts = slice_points * num_slices
+    i0_center = int(np.argmin(np.abs(lambda_em - lambda_0)))
+    half_span = total_pts // 2
+    i0 = max(0, i0_center - half_span)
+    i1 = min(len(lambda_em), i0_center + half_span)
+
+    lam_win  = lambda_em[i0:i1]
+    vpar_win = v_par_raw[i0:i1]
+    vperp_win= v_perp_raw[i0:i1]
+
+    usable = (len(lam_win) // slice_points) * slice_points
+    if usable == 0:
+        raise ValueError("Window too small for the chosen slice width/number of slices.")
+    lam_win  = lam_win[:usable]
+    vpar_win = vpar_win[:usable]
+    vperp_win= vperp_win[:usable]
+
+    num_slices_eff = min(num_slices, usable // slice_points)
+
+    # Per-slice anisotropy using scalar C*_i
+    r_list, centers_nm = [], []
+    bg = float(background)
+    EPS = 1e-12
+
+    for i in range(num_slices_eff):
+        a, b = i * slice_points, (i + 1) * slice_points
+        par_mean  = float(np.mean(vpar_win[a:b]))
+        perp_mean = float(np.mean(vperp_win[a:b]))
+
+        Ipar_corr  = (par_mean  - bg) / (L_star if L_star != 0 else 1.0)
+        Iperp_corr = (perp_mean - bg) / (L_star if L_star != 0 else 1.0)
+
+        denom = Iperp_corr if abs(Iperp_corr) > EPS else (EPS if Iperp_corr == 0 else np.sign(Iperp_corr) * EPS)
+        C_i = Ipar_corr / denom
+        Iperp_star = C_i * Iperp_corr
+
+        denom_r = Ipar_corr + 2.0 * Iperp_star
+        r_i = np.nan if denom_r == 0 else (Ipar_corr - Iperp_star) / denom_r
+        r_list.append(0.0 if np.isnan(r_i) else float(r_i))
 
         centers_nm.append(float(np.mean(lam_win[a:b])))
 
