@@ -78,6 +78,18 @@ def _calculate_average_intensities(par_file, perp_file, params: Dict[str, Any]) 
       - Columns 1..N (rows except last) = intensities for each excitation (one column per λ_ex)
       - Last row = lamp vs excitation (across columns 1..N)
     """
+
+    try:
+        if hasattr(par_file, "seek"):
+            par_file.seek(0)
+    except Exception:
+        pass
+    try:
+        if hasattr(perp_file, "seek"):
+            perp_file.seek(0)
+    except Exception:
+        pass
+        
     par_df = pd.read_csv(par_file, header=None).drop(index=[0, 1]).reset_index(drop=True).astype(float)
     perp_df = pd.read_csv(perp_file, header=None).drop(index=[0, 1]).reset_index(drop=True).astype(float)
 
@@ -263,6 +275,71 @@ def process_single_sample(
     print(final_df.head(10))
     return final_df
 
+# put this next to process_single_sample in src/data_processing.py
+
+def process_single_sample_no_dye(
+    sample_label: str,
+    sample_pair: Dict[str, Any],
+    params: Dict[str, Any],
+    lambda_ref_nm: float = 450.0,
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """
+    NO-DYE method (Scalar Correction of Perpendicular Intensity).
+    Reuses your _calculate_average_intensities() exactly. The only difference
+    vs dye method is replacing the Cj vector with a single scalar C* at λ_ref.
+    """
+    print(f"-> Processing sample (NO DYE): '{sample_label}' @ λ_ref={lambda_ref_nm} nm")
+
+    # ✅ reuse your existing preprocessing (emission window, bg, lamp correction)
+    sample_results = _calculate_average_intensities(
+        sample_pair["parallel"], sample_pair["perpendicular"], params
+    )
+
+    par_avg   = sample_results["par_avg_lamp_corr"]       # (m,)
+    perp_avg  = sample_results["perp_avg_lamp_corr"]      # (m,)
+    lambda_ex = sample_results["lambda_ex"]               # (m,)
+    lambda_0  = float(sample_results["lambda_0"])
+
+    # --- scalar C* at the chosen excitation (nearest index, per the PDF) ---
+    j_star = int(np.argmin(np.abs(lambda_ex - float(lambda_ref_nm))))
+    EPS = 1e-12
+    denom = perp_avg[j_star]
+    if abs(denom) < EPS:
+        denom = EPS if denom == 0 else np.sign(denom) * EPS
+    C_star = float(par_avg[j_star] / denom)
+
+    # Apply the scalar to the whole perpendicular trace
+    perp_corrected = perp_avg * C_star
+
+    # Anisotropy (same formula as dye path)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        anisotropy = (par_avg - perp_corrected) / (par_avg + 2.0 * perp_corrected)
+    anisotropy = np.nan_to_num(anisotropy, nan=0.0)
+
+    # Energy axis relative to λ0 (same as your dye function)
+    energy_rel = (1240.0 / lambda_ex) - (1240.0 / lambda_0)
+
+    # 👇 Keep the SAME schema your downstream code expects.
+    # We fill "Correction Factor (Cj)" with the scalar C* so nothing else breaks.
+    final_df = pd.DataFrame(
+        {
+            "Excitation Wavelength (nm)": lambda_ex,
+            "Par Avg": par_avg,
+            "Perp Avg": perp_avg,
+            "Correction Factor (Cj)": np.full_like(lambda_ex, C_star, dtype=float),
+            "Perp Corrected": perp_corrected,
+            "Anisotropy": anisotropy,
+            "Energy Relative to Lambda_0 (eV)": energy_rel,
+            "lambda_0": lambda_0,
+            "raw_lamp_vector": sample_results["raw_lamp_vector"],
+            "par_avg_raw": sample_results["par_avg_raw"],
+        }
+    )
+
+    meta = {"C_star": C_star, "lambda_ref_nm": float(lambda_ref_nm), "j_ref": int(j_star)}
+    print(f"\n--- NO-DYE Results Table for '{sample_label}' ---")
+    print(final_df.head(10))
+    return final_df, meta
 
 # ===============
 # Page-2 helpers

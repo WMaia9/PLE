@@ -1,7 +1,6 @@
 # streamlit_app/pages/1_Anisotropy_vs_Excitation.py
 
 # ------------ Imports ----------------
-
 import sys
 import os
 import io
@@ -12,19 +11,21 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 import yaml
 
 # We are inside /streamlit_app/pages now — go two levels up so "src" is importable
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-# CORRETO:
 from src.data_processing import (
     get_file_pairs,
     calculate_g_factor_from_dye,
     process_single_sample,
+    process_single_sample_no_dye,
     smooth_cj_vector,
     smooth_cj_moving_average,
-    smooth_cj_gaussian
+    smooth_cj_gaussian,
+    _calculate_average_intensities,
 )
 
 from src.plotting import (
@@ -37,7 +38,7 @@ from src.plotting import (
     plot_anisotropy_all_samples,
     plot_anisotropy_individual,
     plot_correction_factor_smoothed,
-    # Import new plotly functions
+    # Plotly versions
     plot_lamp_functions_all_plotly,
     plot_raw_vs_lamp_corrected_all_plotly,
     plot_sample_corrected_only_plotly,
@@ -55,10 +56,8 @@ def convert_df_to_csv(df: pd.DataFrame) -> bytes:
     return df.to_csv(index=False).encode("utf-8")
 
 def create_zip_in_memory(params, file_names, g_factor_df, samples_results_dict) -> bytes:
-    """Create a ZIP in memory containing config, processed data, and plots."""
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        # Config / metadata
         config_data = {
             "run_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "parameters": params,
@@ -66,18 +65,21 @@ def create_zip_in_memory(params, file_names, g_factor_df, samples_results_dict) 
         }
         zip_file.writestr("run_config.yaml", yaml.dump(config_data, sort_keys=False))
 
-        # Processed CSVs
-        zip_file.writestr("processed_data/g_factor_data.csv", g_factor_df.to_csv(index=False))
+        if not g_factor_df.empty:
+            zip_file.writestr("processed_data/g_factor_data.csv", g_factor_df.to_csv(index=False))
         for label, df in samples_results_dict.items():
             zip_file.writestr(f"processed_data/{label}_result.csv", df.to_csv(index=False))
 
         # Build dict for plotting utilities (names-based mapping)
-        dye_pair_names = get_file_pairs(file_names)[0]  # returns (dye_pair_names, sample_pair_names)
-        dye_label = list(dye_pair_names.keys())[0]
-        all_files_results = {
-            dye_label: g_factor_df.to_dict("list"),
-            **{label: df.to_dict("list") for label, df in samples_results_dict.items()},
-        }
+        all_files_results = {}
+        if not g_factor_df.empty:
+            try:
+                dye_pair_names, _ = get_file_pairs(file_names)
+                dye_label = list(dye_pair_names.keys())[0]
+                all_files_results[dye_label] = g_factor_df.to_dict("list")
+            except Exception:
+                pass
+        all_files_results.update({label: df.to_dict("list") for label, df in samples_results_dict.items()})
 
         def save_fig_to_zip(fig, name: str):
             img_buffer = io.BytesIO()
@@ -85,28 +87,17 @@ def create_zip_in_memory(params, file_names, g_factor_df, samples_results_dict) 
             zip_file.writestr(f"plots/{name}.png", img_buffer.getvalue())
             plt.close(fig)
 
-        # Plots (using matplotlib functions)
-        fig1, _ = plot_lamp_functions_all(all_files_results)
-        save_fig_to_zip(fig1, "1_lamp_functions_all")
+        # Plots
+        fig1, _ = plot_lamp_functions_all(all_files_results);            save_fig_to_zip(fig1, "1_lamp_functions_all")
+        fig2, _ = plot_raw_vs_lamp_corrected_all(all_files_results);     save_fig_to_zip(fig2, "2_raw_vs_lamp_corrected")
+        fig3, _ = plot_sample_corrected_only(samples_results_dict);       save_fig_to_zip(fig3, "3_sample_corrected_only")
 
-        fig2, _ = plot_raw_vs_lamp_corrected_all(all_files_results)
-        save_fig_to_zip(fig2, "2_raw_vs_lamp_corrected")
+        if not g_factor_df.empty:
+            fig4, _ = plot_correction_factor(g_factor_df);               save_fig_to_zip(fig4, "4_correction_factor")
+            fig5, _ = plot_dye_intensity_comparison(g_factor_df);        save_fig_to_zip(fig5, "5_dye_intensity_comparison")
 
-        fig3, _ = plot_sample_corrected_only(samples_results_dict)
-        save_fig_to_zip(fig3, "3_sample_corrected_only")
-
-        fig4, _ = plot_correction_factor(g_factor_df)
-        save_fig_to_zip(fig4, "4_correction_factor")
-
-        fig5, _ = plot_dye_intensity_comparison(g_factor_df)
-        save_fig_to_zip(fig5, "5_dye_intensity_comparison")
-
-        fig6, _ = plot_corrected_intensities_all_samples(samples_results_dict)
-        save_fig_to_zip(fig6, "6_corrected_intensities_all_samples")
-
-        fig7, _ = plot_anisotropy_all_samples(samples_results_dict)
-        save_fig_to_zip(fig7, "7_anisotropy_all_samples")
-
+        fig6, _ = plot_corrected_intensities_all_samples(samples_results_dict); save_fig_to_zip(fig6, "6_corrected_intensities_all_samples")
+        fig7, _ = plot_anisotropy_all_samples(samples_results_dict);     save_fig_to_zip(fig7, "7_anisotropy_all_samples")
         figs_individual = plot_anisotropy_individual(samples_results_dict)
         for i, fig in enumerate(figs_individual):
             sample_label = list(samples_results_dict.keys())[i]
@@ -114,12 +105,62 @@ def create_zip_in_memory(params, file_names, g_factor_df, samples_results_dict) 
 
     return zip_buffer.getvalue()
 
+def _pair_sample_files_loose(file_list):
+    """
+    Pairs *_par / *_perp files WITHOUT requiring a 'dye' label.
+    Accepts either UploadedFile objects or string names.
+    Returns: {label: {"parallel": <same type>, "perpendicular": <same type>}}
+    """
+    import re
+    def _name(x):
+        return x.name if hasattr(x, "name") else os.path.basename(x)
+
+    pairs = {}
+    for x in file_list:
+        fname = _name(x).lower()
+        base, ext = os.path.splitext(fname)
+        if ext != ".csv":
+            continue
+        # prefix: par_<label>.csv or suffix: <label>_par.csv (also allow '-')
+        m_suffix = re.search(r'([_-])(par|perp)$', base)
+        m_prefix = re.match(r'^(par|perp)[_-]', base)
+        if m_suffix:
+            kind = "parallel" if m_suffix.group(2) == "par" else "perpendicular"
+            label = base[:m_suffix.start()].strip("_- ")
+        elif m_prefix:
+            kind = "parallel" if m_prefix.group(1) == "par" else "perpendicular"
+            label = base[m_prefix.end():].strip("_- ")
+        else:
+            # skip files that don't indicate par/perp
+            continue
+        if not label:
+            label = "unnamed"
+        pairs.setdefault(label, {})
+        if kind in pairs[label]:
+            raise ValueError(f"Duplicate {kind} file for label '{label}': {_name(x)}")
+        pairs[label][kind] = x
+
+    # keep only complete pairs
+    pairs = {lab: d for lab, d in pairs.items() if set(d.keys()) == {"parallel", "perpendicular"}}
+    return pairs
+
 # ---------------- Page config ----------------
 st.set_page_config(page_title="Anisotropy vs. Excitation", layout="wide")
 st.title("🔬 Photoluminescence Anisotropy — Anisotropy vs. Excitation")
 
 # ---------------- Sidebar UI ----------------
 st.sidebar.header("Analysis Parameters")
+
+# Choose correction method first
+st.sidebar.subheader("Correction Method")
+correction_method = st.sidebar.radio(
+    "Choose correction method",
+    ["Use dye (vector Cj)", "No dye (scalar C*)"],
+    index=0,
+)
+
+# Global fallback only; actual λ_ref is chosen later in No-dye flow
+lambda_ref_nm = 450.0
 
 uploaded_files = st.sidebar.file_uploader(
     "Upload ALL CSV files (parallel & perpendicular)",
@@ -130,14 +171,23 @@ uploaded_files = st.sidebar.file_uploader(
 # Initialize session state keys once
 if "results_generated" not in st.session_state:
     st.session_state.results_generated = False
+if "phase" not in st.session_state:
+    st.session_state.phase = None
 
 if uploaded_files:
     st.sidebar.subheader("Advanced Options")
-    smoothing_option = st.sidebar.selectbox(
-    "🧹 Apply Smoothing to Correction Curve (Cj)",
-    ["None", "Moving Average", "Savitzky-Golay", "Gaussian"],
-    index=0
-)
+
+    # Only show smoothing when using the dye-based method
+    if correction_method == "Use dye (vector Cj)":
+        smoothing_option = st.sidebar.selectbox(
+            "🧹 Apply Smoothing to Correction Curve (Cj)",
+            ["None", "Moving Average", "Savitzky-Golay", "Gaussian"],
+            index=0
+        )
+    else:
+        smoothing_option = "None"
+        st.sidebar.caption("Smoothing applies only to dye-based Cj. Disabled in No dye mode.")
+
     params = {}
     st.sidebar.subheader("Global Parameters")
     params["background"] = st.sidebar.number_input("Background Level", value=990.0)
@@ -148,8 +198,14 @@ if uploaded_files:
 
     # For UI only, we pass file NAMES so the user assigns lambda0 by label
     file_names = [f.name for f in uploaded_files]
-    dye_pair_names, sample_pair_names = get_file_pairs(file_names)
-    all_pairs = {**dye_pair_names, **sample_pair_names}
+
+    if correction_method == "Use dye (vector Cj)":
+        dye_pair_names, sample_pair_names = get_file_pairs(file_names)  # may raise if no dye
+        all_pairs = {**dye_pair_names, **sample_pair_names}
+    else:
+        # no-dye: build only sample pairs, no dye required
+        sample_pair_names = _pair_sample_files_loose(file_names)
+        all_pairs = {**sample_pair_names}
 
     lambda_0_dict = {}
     for label, pair in all_pairs.items():
@@ -162,84 +218,99 @@ if uploaded_files:
 
     params["lambda_0_dict"] = lambda_0_dict
 
+    # ---------------- Run Analysis ----------------
     if st.sidebar.button("Run Analysis", type="primary"):
         with st.spinner("Processing data... Please wait."):
             try:
-                # For the pipeline, we pass file OBJECTS (not names)
-                dye_pair_obj, sample_pairs_obj = get_file_pairs(uploaded_files)
+                file_names = [f.name for f in uploaded_files]
+                name_to_obj = {f.name: f for f in uploaded_files}
 
-                # 1) Dye G-factor (Cj) table using your original function
-                g_factor_df = calculate_g_factor_from_dye(dye_pair_obj, params)
-
-                # ⬇️ Apply smoothing to Cj based on selected option
-                cj_col = next((c for c in ["Cj (Par / Perp)", "Cj", "G_factor", "G (Par/Perp)"] if c in g_factor_df.columns), None)
-
-                if cj_col:
-                    cj_values = g_factor_df[cj_col].to_numpy()
-                    cj_smoothed = None
-
-                    try:
-                        if smoothing_option == "Moving Average":
-                            cj_smoothed = smooth_cj_moving_average(cj_values, window_size=params["window_size"])
-
-                        elif smoothing_option == "Savitzky-Golay":
-                            cj_smoothed = smooth_cj_vector(cj_values, window_length=params["window_size"], polyorder=2)
-
-                        elif smoothing_option == "Gaussian":
-                            cj_smoothed = smooth_cj_gaussian(cj_values, sigma=2.0)
-
-                        if cj_smoothed is not None:
-                            g_factor_df["Cj Smoothed"] = cj_smoothed
-                            st.info(f"✅ Smoothing method applied: {smoothing_option}")
-
-                    except Exception as e:
-                        st.warning(f"Smoothing failed: {e}")
-                else:
-                    st.warning("Cj column not found. Smoothing skipped.")
-
-                # 2) Process each sample (emission-averaged anisotropy)
                 samples_results_dict = {}
-                for label, pair in sample_pairs_obj.items():
-                    sample_df = process_single_sample(label, pair, g_factor_df, params)
-                    samples_results_dict[label] = sample_df
+                g_factor_df = pd.DataFrame()
 
-                # ---- Store core results for later display & download ----
-                st.session_state.results_generated = True
-                st.session_state.g_factor_df = g_factor_df
-                st.session_state.samples_results_dict = samples_results_dict
-                st.session_state.params = params
-                st.session_state.file_names = file_names
-                st.session_state.uploaded_files = uploaded_files  # for Page 2 reuse
+                if correction_method == "Use dye (vector Cj)":
+                    # Names → pairs (requires dye)
+                    dye_pair_names, sample_pair_names = get_file_pairs(file_names)
+                    # Names → objects
+                    dye_pair_obj = {
+                        list(dye_pair_names.keys())[0]: {
+                            "parallel": name_to_obj[list(dye_pair_names.values())[0]["parallel"]],
+                            "perpendicular": name_to_obj[list(dye_pair_names.values())[0]["perpendicular"]],
+                        }
+                    }
+                    sample_pairs_obj = {
+                        lab: {"parallel": name_to_obj[p["parallel"]], "perpendicular": name_to_obj[p["perpendicular"]]}
+                        for lab, p in sample_pair_names.items()
+                    }
 
-                # ---- NEW (safe): store excitation axis + Cj for Page 2 ----
-                # Excitation axis from dye table (adjust column names if yours differ)
-                lambda_ex = None
-                for col in ["Excitation Wavelength (nm)", "lambda_ex_nm"]:
-                    if col in g_factor_df.columns:
-                        lambda_ex = g_factor_df[col].to_numpy()
-                        break
-                if lambda_ex is not None:
-                    st.session_state.lambda_ex = lambda_ex
+                    # 1) Dye G-factor (Cj)
+                    g_factor_df = calculate_g_factor_from_dye(dye_pair_obj, params)
+
+                    # Optional smoothing
+                    cj_col = next((c for c in ["Cj (Par / Perp)", "Cj", "G_factor", "G (Par/Perp)"] if c in g_factor_df.columns), None)
+                    if cj_col:
+                        try:
+                            cj_values = g_factor_df[cj_col].to_numpy()
+                            if smoothing_option == "Moving Average":
+                                g_factor_df["Cj Smoothed"] = smooth_cj_moving_average(cj_values, window_size=params["window_size"])
+                            elif smoothing_option == "Savitzky-Golay":
+                                g_factor_df["Cj Smoothed"] = smooth_cj_vector(cj_values, window_length=params["window_size"], polyorder=2)
+                            elif smoothing_option == "Gaussian":
+                                g_factor_df["Cj Smoothed"] = smooth_cj_gaussian(cj_values, sigma=2.0)
+                            if "Cj Smoothed" in g_factor_df:
+                                st.info(f"✅ Smoothing method applied: {smoothing_option}")
+                        except Exception as e:
+                            st.warning(f"Smoothing failed: {e}")
+                    else:
+                        st.warning("Cj column not found. Smoothing skipped.")
+
+                    # 2) Process each sample using dye vector
+                    for label, pair in sample_pairs_obj.items():
+                        sample_df = process_single_sample(label, pair, g_factor_df, params)
+                        samples_results_dict[label] = sample_df
+
+                    # ---- Store core results (DYE branch) ----
+                    params["correction_method"] = correction_method
+                    params["lambda_ref_nm"] = float(lambda_ref_nm)  # unused here but ok to store
+                    st.session_state.results_generated = True
+                    st.session_state.g_factor_df = g_factor_df
+                    st.session_state.samples_results_dict = samples_results_dict
+                    st.session_state.params = params
+                    st.session_state.file_names = file_names
+                    st.session_state.uploaded_files = uploaded_files
+                    st.session_state.phase = "done"
+
+                    # Optional: excitation axis for page 2 (only exists in dye mode table)
+                    for col in ["Excitation Wavelength (nm)", "lambda_ex_nm"]:
+                        if col in g_factor_df.columns:
+                            st.session_state.lambda_ex = g_factor_df[col].to_numpy()
+                            break
+
+                    st.success("Analysis complete! See results below or open the Emission page when ready.")
+
                 else:
-                    st.warning(
-                        "Could not infer excitation axis from g_factor_df. "
-                        "Page 2 will attempt to derive it from the dye file if needed."
-                    )
+                    # NO DYE: enter pick-ref phase; don't compute results yet
+                    sample_pairs_obj = _pair_sample_files_loose(uploaded_files)
+                    if not sample_pairs_obj:
+                        raise ValueError("No sample pairs detected. Please upload *_par.csv and *_perp.csv files.")
 
-                # Cj (G-factor) vector aligned with lambda_ex
-                cj_col = next(
-                    (c for c in ["Cj (Par / Perp)", "Cj", "G_factor", "G (Par/Perp)"] if c in g_factor_df.columns),
-                    None,
-                )
-                if cj_col:
-                    st.session_state.Cj_vector = g_factor_df[cj_col].to_numpy()
-                else:
-                    st.warning(
-                        "Could not find a Cj column in g_factor_df. "
-                        "Page 2 will require re-running Page 1 if Cj is missing."
-                    )
+                    # init state for pick-ref flow
+                    params["correction_method"] = correction_method
+                    params["lambda_ref_nm"] = float(lambda_ref_nm)  # fallback if not saved per sample
+                    st.session_state.phase = "pick_ref"
+                    st.session_state.sample_pairs_obj_store = sample_pairs_obj
+                    st.session_state.params = params
+                    st.session_state.file_names = file_names
+                    st.session_state.uploaded_files = uploaded_files
+                    if "no_dye_refs" not in st.session_state:
+                        st.session_state.no_dye_refs = {}
 
-                st.success("Analysis complete! See results below or open the Emission page when ready.")
+                    # Clear any prior results so the Results section does NOT render yet
+                    st.session_state.g_factor_df = pd.DataFrame()
+                    st.session_state.samples_results_dict = {}
+                    st.session_state.results_generated = False
+
+                    st.success("Now choose the reference point for a sample below, then click 'Save ref for this sample' to generate results.")
 
             except Exception as e:
                 st.error(f"An error occurred during processing: {e}")
@@ -261,6 +332,71 @@ st.sidebar.markdown(
     """
 )
 
+# -------------- No-dye pick-ref phase (only after Run Analysis) --------------
+if st.session_state.get("phase") == "pick_ref":
+    st.header("Pick Reference Excitation (No dye)")
+    sample_pairs_obj = st.session_state.sample_pairs_obj_store
+    params_preview = st.session_state.params
+
+    # choose which sample to preview
+    sel_label = st.selectbox(
+        "Select a sample to preview",
+        sorted(sample_pairs_obj.keys()),
+        key="no_dye_sel_label",
+    )
+
+    # Build preview using your preprocessing
+    pre = _calculate_average_intensities(
+        sample_pairs_obj[sel_label]["parallel"],
+        sample_pairs_obj[sel_label]["perpendicular"],
+        params_preview,
+    )
+    lambda_ex = pre["lambda_ex"]
+    par_avg   = pre["par_avg_lamp_corr"]
+    perp_avg  = pre["perp_avg_lamp_corr"]
+
+    # default index = previously saved nm (if any), else 450 nm
+    default_nm = float(st.session_state.no_dye_refs.get(sel_label, 450.0))
+    j_default  = int(np.argmin(np.abs(lambda_ex - default_nm)))
+
+    j_star = st.slider(
+        "Move the marker to choose λ_ref (index on excitation axis)",
+        min_value=0,
+        max_value=len(lambda_ex)-1,
+        value=j_default,
+        key=f"no_dye_ref_idx_{sel_label}",
+    )
+    sel_nm = float(lambda_ex[j_star])
+    st.caption(f"Selected λ_ref ≈ {sel_nm:.1f} nm")
+
+    # Plot Par/Perp (lamp-corr) + vertical marker
+    fig = go.Figure()
+    fig.add_scatter(x=lambda_ex, y=par_avg,  mode="lines", name="Par Avg (lamp-corr)")
+    fig.add_scatter(x=lambda_ex, y=perp_avg, mode="lines", name="Perp Avg (lamp-corr)")
+    fig.add_vline(x=sel_nm)
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Save and generate results
+    if st.button("✓ Save ref for this sample (generate results)"):
+        st.session_state.no_dye_refs[sel_label] = sel_nm
+
+        # compute results for ALL samples:
+        results = {}
+        for label, pair in sample_pairs_obj.items():
+            # use saved per-sample ref if available; else fall back to the one just chosen
+            lambda_ref_for_label = float(st.session_state.no_dye_refs.get(label, sel_nm))
+            df, _meta = process_single_sample_no_dye(
+                label, pair, st.session_state.params, lambda_ref_nm=lambda_ref_for_label
+            )
+            results[label] = df
+
+        # finalize state and show results section
+        st.session_state.g_factor_df = pd.DataFrame()  # no dye => empty
+        st.session_state.samples_results_dict = results
+        st.session_state.results_generated = True
+        st.session_state.phase = "done"
+        st.success("Results generated. Scroll down to see tables and plots.")
+
 # ---------------- Results section ----------------
 if st.session_state.results_generated:
     st.success("Analysis Complete!")
@@ -271,6 +407,9 @@ if st.session_state.results_generated:
     params = st.session_state.params
     file_names = st.session_state.file_names
 
+    # Which method was used
+    correction_method = params.get("correction_method", "Use dye (vector Cj)")
+
     # Download everything as a ZIP
     zip_bytes = create_zip_in_memory(params, file_names, g_factor_df, samples_results_dict)
     st.download_button(
@@ -280,79 +419,77 @@ if st.session_state.results_generated:
         mime="application/zip",
     )
 
-    # DataFrames
-    st.subheader("G-Factor (Dye) Data")
-    st.dataframe(g_factor_df, use_container_width=True)
+    # Dye table (only show in dye mode)
+    if correction_method == "Use dye (vector Cj)" and not g_factor_df.empty:
+        st.subheader("G-Factor (Dye) Data")
+        st.dataframe(g_factor_df, use_container_width=True)
 
     for label, df in samples_results_dict.items():
         st.subheader(f"Results for {label}")
         st.dataframe(df, use_container_width=True)
 
     # Plots
-    # Display Plots
     st.header("Diagnostic Plots")
 
-    # Parse dye label for grouping
-    dye_pair_names, _ = get_file_pairs(file_names)
-    dye_label = list(dye_pair_names.keys())[0]
-
-    # Prepare results for plotting
-    dye_results_dict_for_plot = g_factor_df.to_dict("list")
+    # Prepare results for plotting (works in both modes)
     samples_for_plotting = {label: df.to_dict("list") for label, df in samples_results_dict.items()}
-    all_files_results = {dye_label: dye_results_dict_for_plot, **samples_for_plotting}
+    all_files_results = dict(samples_for_plotting)
+    if correction_method == "Use dye (vector Cj)" and not g_factor_df.empty:
+        try:
+            dye_pair_names, _ = get_file_pairs(file_names)
+            dye_label = list(dye_pair_names.keys())[0]
+            all_files_results = {dye_label: g_factor_df.to_dict("list"), **all_files_results}
+        except Exception:
+            pass
 
-    # --- G-Factor (Dye) Analysis ---
-    st.subheader("Correction Factor (Cj or G-Factor) – Original")
-    fig_dye_g = plot_correction_factor_plotly(g_factor_df)
-    st.plotly_chart(fig_dye_g)
+    # Dye-only plots
+    if correction_method == "Use dye (vector Cj)" and not g_factor_df.empty:
+        st.subheader("Correction Factor (Cj or G-Factor) – Original")
+        fig_dye_g = plot_correction_factor_plotly(g_factor_df)
+        st.plotly_chart(fig_dye_g)
 
-    if params.get("smoothing_option") != "None" and "Cj Smoothed" in g_factor_df.columns:
-        st.subheader(f"Correction Factor (Cj) – Smoothed ({params.get('smoothing_option')})")
-        fig_dye_smooth = plot_correction_factor_smoothed_plotly(g_factor_df)
-        st.plotly_chart(fig_dye_smooth)
+        if params.get("smoothing_option") != "None" and "Cj Smoothed" in g_factor_df.columns:
+            st.subheader(f"Correction Factor (Cj) – Smoothed ({params.get('smoothing_option')})")
+            fig_dye_smooth = plot_correction_factor_smoothed_plotly(g_factor_df)
+            st.plotly_chart(fig_dye_smooth)
 
-        # Replace Cj column in g_factor_df for display and export
-        cj_col = next((c for c in ["Cj (Par / Perp)", "Cj", "G_factor", "G (Par/Perp)"] if c in g_factor_df.columns), None)
-        if cj_col:
-            g_factor_df[cj_col] = g_factor_df["Cj Smoothed"]
-            st.success(f"✅ Smoothed values are now replacing '{cj_col}' in G-Factor Data for downstream calculations.")
+            # Replace Cj column downstream…
+            cj_col = next((c for c in ["Cj (Par / Perp)", "Cj", "G_factor", "G (Par/Perp)"] if c in g_factor_df.columns), None)
+            if cj_col:
+                g_factor_df[cj_col] = g_factor_df["Cj Smoothed"]
+                st.success(f"✅ Smoothed values are now replacing '{cj_col}' in G-Factor Data for downstream calculations.")
+                for sample_label, df in samples_results_dict.items():
+                    if "Excitation Wavelength (nm)" in df.columns:
+                        excitation = df["Excitation Wavelength (nm)"]
+                        cj_interp = np.interp(
+                            excitation,
+                            g_factor_df["Excitation Wavelength (nm)"],
+                            g_factor_df["Cj Smoothed"]
+                        )
+                        df["Correction Factor (Cj)"] = cj_interp
 
-            # Inject smoothed Cj into each sample’s Correction Factor column
-            for sample_label, df in samples_results_dict.items():
-                if "Excitation Wavelength (nm)" in df.columns:
-                    excitation = df["Excitation Wavelength (nm)"]
-                    cj_interp = np.interp(excitation, g_factor_df["Excitation Wavelength (nm)"], g_factor_df["Cj Smoothed"])
-                    df["Correction Factor (Cj)"] = cj_interp  # ✅ Replaces old Cj
+        st.subheader("Dye: Parallel vs Perpendicular Intensity")
+        fig_dye_comp = plot_dye_intensity_comparison_plotly(g_factor_df)
+        st.plotly_chart(fig_dye_comp)
 
-    st.subheader("Dye: Parallel vs Perpendicular Intensity")
-    fig_dye_comp = plot_dye_intensity_comparison_plotly(g_factor_df)
-    st.plotly_chart(fig_dye_comp)
-
-    # --- Lamp and Correction ---
+    # Shared plots (both modes)
     st.subheader("Lamp Functions – All Samples")
-    fig_lamp = plot_lamp_functions_all_plotly(all_files_results)
-    st.plotly_chart(fig_lamp)
+    st.plotly_chart(plot_lamp_functions_all_plotly(all_files_results))
 
     st.subheader("Raw vs Lamp-Corrected – All Samples")
-    fig_raw_corr = plot_raw_vs_lamp_corrected_all_plotly(all_files_results)
-    st.plotly_chart(fig_raw_corr)
+    st.plotly_chart(plot_raw_vs_lamp_corrected_all_plotly(all_files_results))
 
     st.subheader("Corrected Intensities – Individual Samples")
-    fig_corrected = plot_sample_corrected_only_plotly(samples_results_dict)
-    st.plotly_chart(fig_corrected)
+    st.plotly_chart(plot_sample_corrected_only_plotly(samples_results_dict))
 
-    # --- Post-correction Results ---
     st.subheader("Corrected Intensities – All Samples")
-    fig_all_corrected = plot_corrected_intensities_all_samples_plotly(samples_results_dict)
-    st.plotly_chart(fig_all_corrected)
+    st.plotly_chart(plot_corrected_intensities_all_samples_plotly(samples_results_dict))
 
     st.subheader("Anisotropy – All Samples")
-    fig_aniso_all = plot_anisotropy_all_samples_plotly(samples_results_dict)
-    st.plotly_chart(fig_aniso_all)
+    st.plotly_chart(plot_anisotropy_all_samples_plotly(samples_results_dict))
 
     st.subheader("Anisotropy – Individual Samples")
-    figs_aniso_individual = plot_anisotropy_individual_plotly(samples_results_dict)
-    for fig in figs_aniso_individual:
+    for fig in plot_anisotropy_individual_plotly(samples_results_dict):
         st.plotly_chart(fig)
 
 elif not uploaded_files:
