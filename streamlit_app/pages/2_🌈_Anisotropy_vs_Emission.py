@@ -13,6 +13,7 @@ from src.data_processing import (
     get_file_pairs,
     emission_sliced_anisotropy_at_fixed_exc,   # DYE method (existing)
     emission_sliced_anisotropy_no_dye,         # NO-DYE method (add to src if not present)
+    _calculate_average_intensities,             # utility for C* calculation
 )
 from src.plotting import (
     plot_emission_overlay_scatter,  # scatter overlay that matches the reference style
@@ -211,11 +212,12 @@ if st.button("Compute emission-sliced anisotropy", type="primary"):
             for lam_ex_star in lambda_ex_list:
                 try:
                     if correction_method == "Use dye (vector Cj)":
+                        # --- DYE branch (unchanged) ---
                         df_slice = emission_sliced_anisotropy_at_fixed_exc(
                             sample_par_path = spair["parallel"],
                             sample_perp_path= spair["perpendicular"],
-                            dye_par_path    = dye_par,   # kept for signature parity
-                            dye_perp_path   = dye_perp,  # kept for signature parity
+                            dye_par_path    = dye_par,   # signature parity
+                            dye_perp_path   = dye_perp,  # signature parity
                             lambda_em       = lambda_em_local,
                             lambda_ex       = np.asarray(lambda_ex, dtype=float),
                             lambda_0        = float(lam0),
@@ -226,21 +228,45 @@ if st.button("Compute emission-sliced anisotropy", type="primary"):
                             num_slices      = num_slices,
                         )
                     else:
-                        # NO-DYE path
-                        # Build an excitation axis if Page 1 didn't set one; follow Page 1 convention
+                        # --- NO-DYE branch (THIS IS THE PART YOU NEED) ---
+
+                        # 1) get C* for THIS sample from Page 1 results table
+                        C_star = None
+                        try:
+                            df_page1 = st.session_state.samples_results_dict.get(sample_label)
+                            if df_page1 is not None and "Correction Factor (Cj)" in df_page1.columns:
+                                vals = pd.to_numeric(df_page1["Correction Factor (Cj)"],
+                                                    errors="coerce").to_numpy(dtype=float)
+                                # In no-dye, this column is a constant scalar replicated; use median to be safe.
+                                C_star = float(np.nanmedian(vals))
+                        except Exception:
+                            C_star = None
+
+                        # 2) if we couldn't read it (e.g. first run), recompute C* like Page 1
+                        if C_star is None:
+                            pre = _calculate_average_intensities(
+                                spair["parallel"], spair["perpendicular"],
+                                {"background": background, "window_size": 15,
+                                "lambda_0_dict": {getattr(spair["parallel"], "name", "par.csv"): lam0}}
+                            )
+                            lam_ex_tmp = pre["lambda_ex"]
+                            par_avg    = pre["par_avg_lamp_corr"]
+                            perp_avg   = pre["perp_avg_lamp_corr"]
+                            lam_ref = float(st.session_state.get("no_dye_refs", {}).get(sample_label, 450.0))
+                            j_ref  = int(np.argmin(np.abs(lam_ex_tmp - lam_ref)))
+                            eps    = 1e-12
+                            denom  = perp_avg[j_ref] if abs(perp_avg[j_ref]) > eps else (eps if perp_avg[j_ref] == 0 else np.sign(perp_avg[j_ref]) * eps)
+                            C_star = float(par_avg[j_ref] / denom)
+
+                        # 3) make sure we have an excitation axis (Page 1 convention)
                         lam_ex_axis = np.asarray(lambda_ex, dtype=float) if lambda_ex is not None else None
                         if lam_ex_axis is None:
-                            # fallback: derive length from CSV via the same convention as Page 1’s preprocessing
-                            # (we only need the axis to select the nearest index to lam_ex_star)
-                            # We can approximate with a simple 1 nm grid starting at 450 nm with enough columns,
-                            # but better to reuse the page-1 convention; if unavailable, we assume 450..N.
-                            # Here we try to infer N by reading the file structure quickly:
                             rewind_safe(spair["parallel"])
-                            df_tmp = pd.read_csv(spair["parallel"], header=None)
-                            df_tmp = df_tmp.drop(index=[0, 1]).reset_index(drop=True)
-                            m_cols = df_tmp.shape[1] - 1  # excluding first emission column
+                            df_tmp = pd.read_csv(spair["parallel"], header=None).drop(index=[0, 1]).reset_index(drop=True)
+                            m_cols = df_tmp.shape[1] - 1
                             lam_ex_axis = np.arange(450.0, 450.0 + m_cols, dtype=float)
 
+                        # 4) call the corrected NO-DYE slicer (note the C_star=... argument)
                         df_slice = emission_sliced_anisotropy_no_dye(
                             sample_par_path = spair["parallel"],
                             sample_perp_path= spair["perpendicular"],
@@ -249,9 +275,11 @@ if st.button("Compute emission-sliced anisotropy", type="primary"):
                             lambda_0        = float(lam0),
                             lambda_ex_star  = float(lam_ex_star),
                             background      = float(background),
+                            C_star          = float(C_star),          # <<< pass C*
                             slice_points    = slice_points,
                             num_slices      = num_slices,
                         )
+
                     per_ex_results[lam_ex_star] = df_slice
 
                 except Exception as ex:
