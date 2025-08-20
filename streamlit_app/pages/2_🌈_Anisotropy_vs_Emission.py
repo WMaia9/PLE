@@ -12,7 +12,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".
 from src.data_processing import (
     get_file_pairs,
     emission_sliced_anisotropy_at_fixed_exc,   # DYE method (existing)
-    emission_sliced_anisotropy_no_dye,         # NO-DYE method (add to src if not present)
+    emission_sliced_anisotropy_no_dye,         # NO DYE method
     _calculate_average_intensities,             # utility for C* calculation
 )
 from src.plotting import (
@@ -81,7 +81,7 @@ st.sidebar.markdown(
     This application was developed as a project by students from the 
     **University of California, Merced**.
 
-    - **Intellectual Property:** Fernanda Hlousek  
+    - **Intellectual Property:** Fernanda Hlousek
     - **Lead Developer:** Wesley Maia
 
     *© 2025 Fernanda Hlousek. All Rights Reserved.*
