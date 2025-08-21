@@ -70,8 +70,8 @@ slice_points = int(st.sidebar.number_input("Emission slice width (points)", min_
 num_slices   = int(st.sidebar.number_input("Number of slices",            min_value=5, max_value=100, value=15, step=1))
 
 # Overlay axes (optional, keep your previous look)
-xlim_min, xlim_max = 568.0, 598.0
-ylim_min, ylim_max = -0.025, 0.025
+#xlim_min, xlim_max = 568.0, 598.0
+#ylim_min, ylim_max = -0.025, 0.025
 
 # ---------------- About (sidebar) ----------------
 st.sidebar.markdown("---")
@@ -302,8 +302,8 @@ if "sliced_results" in st.session_state:
             ex_map,
             sample_label=sample_label,
             xaxis="lambda",
-            xlim_nm=(xlim_min, xlim_max),
-            ylim=(ylim_min, ylim_max),
+            #xlim_nm=(xlim_min, xlim_max),
+            #ylim=(ylim_min, ylim_max),
         )
         st.pyplot(fig_overlay)
 

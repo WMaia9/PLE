@@ -291,7 +291,7 @@ def plot_emission_sliced_anisotropy(df: pd.DataFrame, save_dir: str = None, samp
         fig.savefig(os.path.join(save_dir, fname))
     return fig, ax
 
-def plot_emission_overlay_scatter(per_ex_results: Dict[float, pd.DataFrame], sample_label: str = "", xaxis: str = "lambda", xlim_nm: Tuple[float, float] = None, ylim: Tuple[float, float] = (-0.025, 0.025)) -> Tuple[plt.Figure, plt.Axes]:
+def plot_emission_overlay_scatter(per_ex_results: Dict[float, pd.DataFrame], sample_label: str = "", xaxis: str = "lambda", xlim_nm: Tuple[float, float] = None) -> Tuple[plt.Figure, plt.Axes]:
     """
     Creates an overlay scatter plot of anisotropy vs. emission for multiple
     excitation wavelengths.
@@ -330,8 +330,8 @@ def plot_emission_overlay_scatter(per_ex_results: Dict[float, pd.DataFrame], sam
 
     ax.set_xlabel(xlabel)
     ax.set_ylabel("anisotropy (r)")
-    if ylim: ax.set_ylim(*ylim)
-    if xlim: ax.set_xlim(*xlim)
+    #if ylim: ax.set_ylim(*ylim)
+    #if xlim: ax.set_xlim(*xlim)
     ax.grid(True, alpha=0.25)
     ax.legend(title="λ_ex", ncols=3, frameon=False, loc="upper right")
     ax.set_title(f"Emission-sliced anisotropy — {sample_label}")
@@ -677,7 +677,7 @@ def plot_emission_sliced_anisotropy_plotly(df: pd.DataFrame, sample_label: str =
     )
     return fig
 
-def plot_emission_overlay_scatter_plotly(per_ex_results: Dict[float, pd.DataFrame], sample_label: str = "", xaxis: str = "lambda", xlim_nm: Tuple[float, float] = None, ylim: Tuple[float, float] = (-0.025, 0.025)) -> go.Figure:
+def plot_emission_overlay_scatter_plotly(per_ex_results: Dict[float, pd.DataFrame], sample_label: str = "", xaxis: str = "lambda", xlim_nm: Tuple[float, float] = None) -> go.Figure:
     """
     Creates an interactive overlay plot of anisotropy vs. emission for
     multiple excitation wavelengths.
@@ -717,7 +717,7 @@ def plot_emission_overlay_scatter_plotly(per_ex_results: Dict[float, pd.DataFram
         yaxis_title="Anisotropy (r)",
         legend_title="λ_ex",
         width=800,
-        xaxis_range=x_range,
-        yaxis_range=ylim
+        #xaxis_range=x_range,
+        #yaxis_range=ylim
     )
     return fig

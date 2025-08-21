@@ -339,19 +339,28 @@ st.sidebar.markdown(
 )
 
 # -------------- No-dye pick-ref phase (only after Run Analysis) --------------
+# REPLACE your entire No-dye picker block in:
+# streamlit_app/pages/1_Anisotropy_vs_Excitation.py
+# (the block that starts with: if st.session_state.get("phase") == "pick_ref":)
+
 if st.session_state.get("phase") == "pick_ref":
     st.header("Pick Reference Excitation (No dye)")
-    sample_pairs_obj = st.session_state.sample_pairs_obj_store
-    params_preview = st.session_state.params
 
-    # choose which sample to preview
+    sample_pairs_obj = st.session_state.sample_pairs_obj_store
+    params_preview   = st.session_state.params
+
+    # ensure the dict exists and DO NOT auto-fill other samples
+    if "no_dye_refs" not in st.session_state:
+        st.session_state.no_dye_refs = {}
+
+    # 1) choose which sample to preview
     sel_label = st.selectbox(
         "Select a sample to preview",
         sorted(sample_pairs_obj.keys()),
         key="no_dye_sel_label",
     )
 
-    # Build preview using your preprocessing
+    # 2) build preview using your preprocessing
     pre = _calculate_average_intensities(
         sample_pairs_obj[sel_label]["parallel"],
         sample_pairs_obj[sel_label]["perpendicular"],
@@ -361,7 +370,7 @@ if st.session_state.get("phase") == "pick_ref":
     par_avg   = pre["par_avg_lamp_corr"]
     perp_avg  = pre["perp_avg_lamp_corr"]
 
-    # default index = previously saved nm (if any), else 450 nm
+    # default index = previously saved nm for THIS sample (if any), else 450 nm
     default_nm = float(st.session_state.no_dye_refs.get(sel_label, 450.0))
     j_default  = int(np.argmin(np.abs(lambda_ex - default_nm)))
 
@@ -373,32 +382,51 @@ if st.session_state.get("phase") == "pick_ref":
         key=f"no_dye_ref_idx_{sel_label}",
     )
     sel_nm = float(lambda_ex[j_star])
-    st.caption(f"Selected λ_ref ≈ {sel_nm:.1f} nm")
+    st.caption(f"Selected λ_ref for **{sel_label}** ≈ {sel_nm:.1f} nm")
 
-    # Plot Par/Perp (lamp-corr) + vertical marker
+    # plot Par/Perp (lamp-corr) + vertical marker
     fig = go.Figure()
     fig.add_scatter(x=lambda_ex, y=par_avg,  mode="lines", name="Par Avg (lamp-corr)")
     fig.add_scatter(x=lambda_ex, y=perp_avg, mode="lines", name="Perp Avg (lamp-corr)")
     fig.add_vline(x=sel_nm)
     st.plotly_chart(fig, use_container_width=True)
 
-    # Save and generate results
-    if st.button("✓ Save ref for this sample (generate results)"):
-        st.session_state.no_dye_refs[sel_label] = sel_nm
+    # 3) save options (NO automatic propagation!)
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("✓ Save λ_ref for THIS sample only"):
+            st.session_state.no_dye_refs[sel_label] = sel_nm
+            st.success(f"Saved λ_ref = {sel_nm:.1f} nm for {sel_label}")
 
-        # compute results for ALL samples:
+    with c2:
+        if st.button("✓ Save this λ_ref for ALL samples (overwrite)"):
+            for lab in sample_pairs_obj.keys():
+                st.session_state.no_dye_refs[lab] = sel_nm
+            st.success(f"Saved λ_ref = {sel_nm:.1f} nm for ALL samples")
+
+    # 4) show current per-sample refs (what will be used)
+    rows = []
+    for lab in sorted(sample_pairs_obj.keys()):
+        nm = st.session_state.no_dye_refs.get(lab, None)
+        rows.append({
+            "Sample": lab,
+            "λ_ref saved (nm)": f"{nm:.1f}" if isinstance(nm, (int, float)) else "— (will use default 450)"
+        })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+
+    # 5) compute results using SAVED refs ONLY (unset → default 450)
+    #    This avoids the issue where one pick (e.g., 583) accidentally applies to others.
+    if st.button("▶ Compute results (No dye)"):
         results = {}
         summary_rows = []
         for label, pair in sample_pairs_obj.items():
-            # use saved per-sample ref if available; else fall back to the one just chosen
-            lambda_ref_for_label = float(st.session_state.no_dye_refs.get(label, sel_nm))
-            st.session_state.no_dye_refs[label] = lambda_ref_for_label
+            lam_ref_for_label = float(st.session_state.no_dye_refs.get(label, 450.0))
             df, meta = process_single_sample_no_dye(
-                label, pair, st.session_state.params, lambda_ref_nm=lambda_ref_for_label
+                label, pair, st.session_state.params, lambda_ref_nm=lam_ref_for_label
             )
             results[label] = df
             summary_rows.append({
-                "Sample":label,
+                "Sample": label,
                 "λ_ref used (nm)": float(meta["lambda_ref_nm"]),
                 "C* used": float(meta["C_star"]),
             })
@@ -409,7 +437,7 @@ if st.session_state.get("phase") == "pick_ref":
         st.session_state.results_generated = True
         st.session_state.phase = "done"
         st.session_state.no_dye_summary = pd.DataFrame(summary_rows)
-        st.rerun()
+        st.success("Results generated. Scroll down to see tables and plots.")
 
 # ---------- Quick action: re-open No-dye picker without re-uploading ----------
 if (
