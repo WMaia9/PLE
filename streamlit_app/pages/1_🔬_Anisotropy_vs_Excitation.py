@@ -388,20 +388,28 @@ if st.session_state.get("phase") == "pick_ref":
 
         # compute results for ALL samples:
         results = {}
+        summary_rows = []
         for label, pair in sample_pairs_obj.items():
             # use saved per-sample ref if available; else fall back to the one just chosen
             lambda_ref_for_label = float(st.session_state.no_dye_refs.get(label, sel_nm))
-            df, _meta = process_single_sample_no_dye(
+            st.session_state.no_dye_refs[label] = lambda_ref_for_label
+            df, meta = process_single_sample_no_dye(
                 label, pair, st.session_state.params, lambda_ref_nm=lambda_ref_for_label
             )
             results[label] = df
+            summary_rows.append({
+                "Sample":label,
+                "λ_ref used (nm)": float(meta["lambda_ref_nm"]),
+                "C* used": float(meta["C_star"]),
+            })
 
         # finalize state and show results section
         st.session_state.g_factor_df = pd.DataFrame()  # no dye => empty
         st.session_state.samples_results_dict = results
         st.session_state.results_generated = True
         st.session_state.phase = "done"
-        st.success("Results generated. Scroll down to see tables and plots.")
+        st.session_state.no_dye_summary = pd.DataFrame(summary_rows)
+        st.rerun()
 
 # ---------- Quick action: re-open No-dye picker without re-uploading ----------
 if (
