@@ -34,14 +34,15 @@ st.markdown("""
 Use the sidebar to navigate between pages.
 
 ### 1) Anisotropy vs. Excitation (emission-averaged)
-- Upload all *_par / *_perp CSVs at once  
-- Choose **Use dye (vector Cj)** *or* **No dye (scalar C\*)**  
-- The app applies background & lamp corrections and computes **r(λ_ex)**  
-- In **No dye**, you’ll pick a **reference excitation** (λ_ref) on a plot; that sets a single **C\*** for the sample
+- Upload all `_par.csv` and `_perp.csv` files at once  
+  *(If you use the dye method, also include the dye pair: e.g. `dye_par.csv` and `dye_perp.csv`.)*
+- Choose **Use dye (vector Cj)** or **No dye (scalar C*)**
+- The app applies background & lamp corrections and computes **r(λ_ex)**
+- In **No dye**, you’ll pick a **reference excitation** (λ_ref) on a plot; that sets a single **C*** for the sample
 
 ### 2) Anisotropy vs. Emission (fixed λ_ex, sliced)
 - Enter fixed excitation(s) in nm (comma-separated)
-- Uses the same corrections; in **No dye** it reuses the **same C\*** from Page 1
+- Uses the same corrections; in **No dye** it reuses the **same C*** from Page 1
 """)
 
 def _safe_name(s: str) -> str:
