@@ -163,31 +163,6 @@ streamlit run streamlit_app/Home.py
 When you finish Page 1 and/or Page 2, you can download everything from **Home → “Download ALL results (Excitation + Emission)”**.  
 The ZIP contains CSVs and plots organized by page.
 
-### ZIP layout
-
-processed_data/
-  Excitation/
-    g_factor_data.csv                      # only if Dye method was used
-    <sample>_excitation_result.csv         # one per sample
-    no_dye_summary.csv                     # only in No-dye (λ_ref and C*)
-  Emssion/
-    <sample>/<EX_nm>nm_slices.csv          # one CSV per excitation per sample (Page 2)
-
-plots/
-  Excitation/
-    1_lamp_functions_all.png
-    2_raw_vs_lamp_corrected.png
-    3_sample_corrected_only.png
-    4_correction_factor.png                # only if Dye
-    5_dye_intensity_comparison.png         # only if Dye
-    6_corrected_intensities_all_samples.png
-    7_anisotropy_all_samples.png
-    8_anisotropy_individual_<sample>.png
-  Emssion/
-    <sample>_overlay.png                   # Page 2 overlay (y-range: −0.020 … +0.020 by default)
-
-run_config.yaml
-
 ### What each file contains
 
 **`processed_data/Excitation/<sample>_excitation_result.csv`**
