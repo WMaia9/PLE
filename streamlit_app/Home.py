@@ -143,8 +143,8 @@ def build_full_results_zip() -> bytes:
                         ex_map,
                         sample_label=label,
                         xaxis="lambda",
-                        xlim_nm=(568.0, 598.0),
-                        ylim=(-0.020, 0.020),  # your updated y-range
+                        #xlim_nm=(568.0, 598.0),
+                        #ylim=(-0.020, 0.020),  # your updated y-range
                     )
                     buf = io.BytesIO()
                     fig_overlay.savefig(buf, format="png", bbox_inches="tight", dpi=150)
